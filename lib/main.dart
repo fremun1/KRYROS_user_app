@@ -180,7 +180,7 @@ class _WebViewPageState extends State<WebViewPage> with SingleTickerProviderStat
     debugPrint("FCM Token: $token");
 
     // Local notifications setup
-    const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings('launcher_icon');
     const InitializationSettings initializationSettings = InitializationSettings(android: initializationSettingsAndroid);
     await flutterLocalNotificationsPlugin.initialize(initializationSettings);
 
@@ -200,7 +200,7 @@ class _WebViewPageState extends State<WebViewPage> with SingleTickerProviderStat
               'KRYROS Notifications',
               importance: Importance.max,
               priority: Priority.high,
-              icon: '@mipmap/ic_launcher',
+              icon: 'launcher_icon',
             ),
           ),
         );
