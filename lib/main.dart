@@ -29,7 +29,7 @@ class KryrosUserApp extends StatelessWidget {
       title: 'KRYROS',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        primarySwatch: Colors.teal,
+        primaryColor: const Color(0xFF27B9AF),
         useMaterial3: true,
       ),
       home: const SplashScreen(url: 'https://kryros.com'),
@@ -45,78 +45,193 @@ class SplashScreen extends StatefulWidget {
   State<SplashScreen> createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _animation;
+class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMixin {
+  late AnimationController _pulseController;
+  late AnimationController _blinkController;
+  late AnimationController _bounceController;
+  bool _isFadingOut = false;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
+    
+    // Pulse rings animation
+    _pulseController = AnimationController(
       duration: const Duration(seconds: 2),
       vsync: this,
-    )..repeat(reverse: true);
-    _animation = Tween<double>(begin: 1.0, end: 1.2).animate(CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeInOut,
-    ));
+    )..repeat();
 
-    Timer(const Duration(seconds: 3), () {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => WebViewPage(url: widget.url)),
-      );
+    // Blink logo and text animation
+    _blinkController = AnimationController(
+      duration: const Duration(milliseconds: 1600),
+      vsync: this,
+    )..repeat(reverse: true);
+
+    // Bouncing dots animation
+    _bounceController = AnimationController(
+      duration: const Duration(milliseconds: 900),
+      vsync: this,
+    )..repeat();
+
+    // Navigation timer
+    Timer(const Duration(milliseconds: 1800), () {
+      if (mounted) {
+        setState(() {
+          _isFadingOut = true;
+        });
+        Timer(const Duration(milliseconds: 400), () {
+          if (mounted) {
+            Navigator.of(context).pushReplacement(
+              PageRouteBuilder(
+                pageBuilder: (context, animation, secondaryAnimation) => WebViewPage(url: widget.url),
+                transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                  return FadeTransition(opacity: animation, child: child);
+                },
+                transitionDuration: const Duration(milliseconds: 400),
+              ),
+            );
+          }
+        });
+      }
     });
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _pulseController.dispose();
+    _blinkController.dispose();
+    _bounceController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    const backgroundColor = Color(0xFF050816);
+    const primaryColor = Color(0xFF27B9AF);
+
     return Scaffold(
-      backgroundColor: const Color(0xFF0D1826),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            ScaleTransition(
-              scale: _animation,
-              child: Container(
-                width: 150,
-                height: 150,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: const Color(0xFF1FA89A), width: 4),
-                  image: const DecorationImage(
-                    image: AssetImage('assets/logo.png'),
-                    fit: BoxFit.cover,
+      backgroundColor: backgroundColor,
+      body: AnimatedOpacity(
+        opacity: _isFadingOut ? 0.0 : 1.0,
+        duration: const Duration(milliseconds: 400),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Pulsing rings around logo
+              Stack(
+                alignment: Alignment.center,
+                children: [
+                  ...List.generate(3, (index) {
+                    return AnimatedBuilder(
+                      animation: _pulseController,
+                      builder: (context, child) {
+                        final delay = index * 0.35;
+                        double progress = (_pulseController.value - delay);
+                        if (progress < 0) progress += 1.0;
+                        
+                        final scale = 0.85 + (progress * 0.4);
+                        final opacity = progress < 0.6 
+                            ? (0.9 - (progress / 0.6 * 0.55))
+                            : (0.35 - ((progress - 0.6) / 0.4 * 0.35));
+
+                        return Transform.scale(
+                          scale: scale,
+                          child: Opacity(
+                            opacity: opacity.clamp(0.0, 1.0),
+                            child: Container(
+                              width: 54.0 + (index + 1) * 26.0,
+                              height: 54.0 + (index + 1) * 26.0,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: primaryColor.withOpacity(0.5 - (index + 1) * 0.12),
+                                  width: index == 0 ? 2.0 : 1.5,
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  }),
+                  // Logo with blink effect
+                  FadeTransition(
+                    opacity: Tween<double>(begin: 1.0, end: 0.45).animate(
+                      CurvedAnimation(parent: _blinkController, curve: Curves.easeInOut),
+                    ),
+                    child: Image.asset(
+                      'assets/logo.png',
+                      width: 60,
+                      height: 60,
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 28),
+              // Brand name with blink effect
+              FadeTransition(
+                opacity: Tween<double>(begin: 1.0, end: 0.45).animate(
+                  CurvedAnimation(
+                    parent: _blinkController,
+                    curve: const Interval(0.125, 1.0, curve: Curves.easeInOut),
+                  ),
+                ),
+                child: const Text(
+                  'KRYROS',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 2.6, // 0.12em
+                    fontFamily: 'sans-serif',
                   ),
                 ),
               ),
-            ),
-            const SizedBox(height: 30),
-            const Text(
-              'KRYROS',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 2,
+              const SizedBox(height: 20),
+              // Bouncing loading dots
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(3, (index) {
+                  return AnimatedBuilder(
+                    animation: _bounceController,
+                    builder: (context, child) {
+                      final delay = index * 0.18;
+                      double progress = (_bounceController.value - delay);
+                      if (progress < 0) progress += 1.0;
+
+                      final yOffset = progress < 0.5
+                          ? -8.0 * (progress / 0.5)
+                          : -8.0 * (1.0 - (progress - 0.5) / 0.5);
+                      
+                      final opacity = progress < 0.5
+                          ? 0.35 + (0.65 * (progress / 0.5))
+                          : 1.0 - (0.65 * ((progress - 0.5) / 0.5));
+
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 3.5),
+                        child: Transform.translate(
+                          offset: Offset(0, yOffset),
+                          child: Opacity(
+                            opacity: opacity.clamp(0.35, 1.0),
+                            child: Container(
+                              width: 6,
+                              height: 6,
+                              decoration: const BoxDecoration(
+                                color: primaryColor,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                }),
               ),
-            ),
-            const SizedBox(height: 10),
-            const Text(
-              'Simple. Reliable. Global.',
-              style: TextStyle(
-                color: Color(0xFF1FA89A),
-                fontSize: 14,
-                letterSpacing: 1.2,
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -222,8 +337,6 @@ class _WebViewPageState extends State<WebViewPage> with SingleTickerProviderStat
     
     debugPrint("Registering FCM token via JS Bridge: $_fcmToken");
     
-    // We execute JS in the WebView to call the backend API using the existing session.
-    // This way, we don't need to manually handle cookies or JWT in Flutter.
     final String jsCode = """
       (function() {
         fetch('/api/notifications/token', {
@@ -254,7 +367,7 @@ class _WebViewPageState extends State<WebViewPage> with SingleTickerProviderStat
             WebViewWidget(controller: _controller),
             if (_isLoading)
               Container(
-                color: const Color(0xFF0D1826).withOpacity(0.7),
+                color: const Color(0xFF050816).withOpacity(0.7),
                 child: Center(
                   child: AnimatedBuilder(
                     animation: _loadingController,
@@ -265,7 +378,7 @@ class _WebViewPageState extends State<WebViewPage> with SingleTickerProviderStat
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           border: Border.all(
-                            color: const Color(0xFF1FA89A).withOpacity(
+                            color: const Color(0xFF27B9AF).withOpacity(
                               0.3 + (0.7 * _loadingController.value),
                             ),
                             width: 4,
