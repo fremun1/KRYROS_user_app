@@ -136,6 +136,7 @@ class _WebViewPageState extends State<WebViewPage> with SingleTickerProviderStat
   bool _isLoading = true;
   late AnimationController _loadingController;
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+  String? _fcmToken;
 
   @override
   void initState() {
@@ -163,6 +164,14 @@ class _WebViewPageState extends State<WebViewPage> with SingleTickerProviderStat
           },
         ),
       )
+      ..addJavaScriptChannel(
+        'MobileBridge',
+        onMessageReceived: (JavaScriptMessage message) {
+          if (message.message == 'user_logged_in') {
+            _registerTokenWithSession();
+          }
+        },
+      )
       ..loadRequest(Uri.parse(widget.url));
   }
 
@@ -176,8 +185,8 @@ class _WebViewPageState extends State<WebViewPage> with SingleTickerProviderStat
     );
 
     // Get token for backend registration
-    String? token = await messaging.getToken();
-    debugPrint("FCM Token: $token");
+    _fcmToken = await messaging.getToken();
+    debugPrint("FCM Token: $_fcmToken");
 
     // Local notifications setup
     const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings('launcher_icon');
@@ -206,6 +215,28 @@ class _WebViewPageState extends State<WebViewPage> with SingleTickerProviderStat
         );
       }
     });
+  }
+
+  Future<void> _registerTokenWithSession() async {
+    if (_fcmToken == null) return;
+    
+    debugPrint("Registering FCM token via JS Bridge: $_fcmToken");
+    
+    // We execute JS in the WebView to call the backend API using the existing session.
+    // This way, we don't need to manually handle cookies or JWT in Flutter.
+    final String jsCode = """
+      (function() {
+        fetch('/api/notifications/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: '$_fcmToken', platform: 'android' })
+        })
+        .then(response => console.log('Token registered:', response.status))
+        .catch(error => console.error('Token registration failed:', error));
+      })();
+    """;
+    
+    await _controller.runJavaScript(jsCode);
   }
 
   @override
