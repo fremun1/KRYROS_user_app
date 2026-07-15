@@ -315,6 +315,11 @@ class _WebViewPageState extends State<WebViewPage> with SingleTickerProviderStat
     _fcmToken = await messaging.getToken();
     debugPrint("FCM Token: $_fcmToken");
 
+    // Initial public registration (guest)
+    if (_fcmToken != null) {
+      _registerPublicToken();
+    }
+
     // Local notifications setup
     const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings('launcher_icon');
     const InitializationSettings initializationSettings = InitializationSettings(android: initializationSettingsAndroid);
@@ -342,6 +347,25 @@ class _WebViewPageState extends State<WebViewPage> with SingleTickerProviderStat
         );
       }
     });
+  }
+
+  Future<void> _registerPublicToken() async {
+    if (_fcmToken == null) return;
+    debugPrint("Registering Public FCM token: $_fcmToken");
+    
+    final String jsCode = """
+      (function() {
+        fetch('/api/notifications/token/public', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: '$_fcmToken', platform: 'android' })
+        })
+        .then(response => console.log('Public Token registered:', response.status))
+        .catch(error => console.error('Public Token registration failed:', error));
+      })();
+    """;
+    
+    await _controller.runJavaScript(jsCode);
   }
 
   Future<void> _registerTokenWithSession() async {
