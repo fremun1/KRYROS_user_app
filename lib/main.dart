@@ -140,8 +140,7 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
         duration: const Duration(milliseconds: 500),
         child: Center(
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
+            mainAxisAlignment: Main => [
               Stack(
                 alignment: Alignment.center,
                 children: [
@@ -342,7 +341,7 @@ class _WebViewPageState extends State<WebViewPage> {
           notification.hashCode,
           notification.title,
           notification.body,
-          NotificationDetails(
+          notificationDetails: NotificationDetails(
             android: AndroidNotificationDetails(
               'kryros_notifications',
               'KRYROS Notifications',
@@ -385,8 +384,6 @@ class _WebViewPageState extends State<WebViewPage> {
             if (didPop) return;
             if (await _controller.canGoBack()) {
               _controller.goBack();
-            } else {
-              // Optionally handle app exit confirmation
             }
           },
           child: RefreshIndicator(
