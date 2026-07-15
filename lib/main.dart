@@ -74,7 +74,7 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
     )..repeat();
 
     // Navigation timer
-    Timer(const Duration(milliseconds: 1800), () {
+    Timer(const Duration(milliseconds: 2200), () {
       if (mounted) {
         setState(() {
           _isFadingOut = true;
