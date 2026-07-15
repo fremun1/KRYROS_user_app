@@ -140,7 +140,8 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
         duration: const Duration(milliseconds: 500),
         child: Center(
           child: Column(
-            mainAxisAlignment: Main => [
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
               Stack(
                 alignment: Alignment.center,
                 children: [
@@ -341,7 +342,7 @@ class _WebViewPageState extends State<WebViewPage> {
           notification.hashCode,
           notification.title,
           notification.body,
-          notificationDetails: NotificationDetails(
+          NotificationDetails(
             android: AndroidNotificationDetails(
               'kryros_notifications',
               'KRYROS Notifications',
