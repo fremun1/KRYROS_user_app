@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:webview_flutter/webview_flutter.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'dart:async';
+import 'dart:io';
 
 // Background message handler
 @pragma('vm:entry-point')
@@ -17,6 +21,11 @@ void main() async {
   
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   
+  // Request notification permissions for Android 13+
+  if (Platform.isAndroid) {
+    await Permission.notification.request();
+  }
+
   runApp(const KryrosUserApp());
 }
 
@@ -34,7 +43,7 @@ class KryrosUserApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xFF27B9AF),
           primary: const Color(0xFF27B9AF),
-          background: const Color(0xFF050816),
+          surface: const Color(0xFF050816),
         ),
       ),
       home: const MainContainer(url: 'https://kryros.com'),
@@ -55,12 +64,12 @@ class _MainContainerState extends State<MainContainer> {
   bool _isWebViewReady = false;
 
   void _onWebViewReady() {
-    if (mounted) {
+    if (mounted && _showSplash) {
       setState(() {
         _isWebViewReady = true;
       });
       // Delay slightly to ensure smooth transition
-      Future.delayed(const Duration(milliseconds: 500), () {
+      Future.delayed(const Duration(milliseconds: 800), () {
         if (mounted) {
           setState(() {
             _showSplash = false;
@@ -72,17 +81,19 @@ class _MainContainerState extends State<MainContainer> {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        WebViewPage(
-          url: widget.url,
-          onPageFinished: _onWebViewReady,
-        ),
-        if (_showSplash)
-          SplashScreen(
-            isTransitioning: _isWebViewReady,
+    return Scaffold(
+      body: Stack(
+        children: [
+          WebViewPage(
+            url: widget.url,
+            onPageFinished: _onWebViewReady,
           ),
-      ],
+          if (_showSplash)
+            SplashScreen(
+              isTransitioning: _isWebViewReady,
+            ),
+        ],
+      ),
     );
   }
 }
@@ -197,6 +208,9 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                           width: 70,
                           height: 70,
                           fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return const Icon(Icons.circle, color: primaryColor, size: 70);
+                          },
                         ),
                       ),
                     ),
@@ -279,70 +293,90 @@ class WebViewPage extends StatefulWidget {
 }
 
 class _WebViewPageState extends State<WebViewPage> {
-  late final WebViewController _controller;
+  InAppWebViewController? _webViewController;
+  PullToRefreshController? _pullToRefreshController;
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+  
+  double _progress = 0;
+  bool _isOffline = false;
   String? _fcmToken;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
 
   @override
   void initState() {
     super.initState();
     _setupNotifications();
+    _checkConnectivity();
     
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(const Color(0xFF050816))
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageFinished: (String url) {
-            widget.onPageFinished();
-          },
-        ),
-      )
-      ..addJavaScriptChannel(
-        'MobileBridge',
-        onMessageReceived: (JavaScriptMessage message) {
-          if (message.message == 'user_logged_in') {
-            _registerTokenWithSession();
-          }
-        },
-      )
-      ..loadRequest(Uri.parse(widget.url));
+    _pullToRefreshController = PullToRefreshController(
+      settings: PullToRefreshSettings(
+        color: const Color(0xFF27B9AF),
+        backgroundColor: const Color(0xFF050816),
+      ),
+      onRefresh: () async {
+        if (Platform.isAndroid) {
+          _webViewController?.reload();
+        } else if (Platform.isIOS) {
+          _webViewController?.loadUrl(urlRequest: URLRequest(url: await _webViewController?.getUrl()));
+        }
+      },
+    );
+
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((List<ConnectivityResult> results) {
+      setState(() {
+        _isOffline = results.contains(ConnectivityResult.none);
+      });
+      if (!_isOffline) {
+        _webViewController?.reload();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _connectivitySubscription?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _checkConnectivity() async {
+    var results = await Connectivity().checkConnectivity();
+    setState(() {
+      _isOffline = results.contains(ConnectivityResult.none);
+    });
   }
 
   Future<void> _setupNotifications() async {
     FirebaseMessaging messaging = FirebaseMessaging.instance;
-    await messaging.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-    );
+    await messaging.requestPermission(alert: true, badge: true, sound: true);
 
     _fcmToken = await messaging.getToken();
-    if (_fcmToken != null) {
-      _registerPublicToken();
+    
+    // Handle Initial Message (When app is closed)
+    RemoteMessage? initialMessage = await FirebaseMessaging.instance.getInitialMessage();
+    if (initialMessage != null && initialMessage.data['url'] != null) {
+      _loadUrl(initialMessage.data['url']);
     }
 
     const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings('launcher_icon');
     const InitializationSettings initializationSettings = InitializationSettings(android: initializationSettingsAndroid);
+    
     await flutterLocalNotificationsPlugin.initialize(
       initializationSettings,
       onDidReceiveNotificationResponse: (NotificationResponse response) {
         if (response.payload != null) {
-          _controller.loadRequest(Uri.parse(response.payload!));
+          _loadUrl(response.payload!);
         }
       },
     );
 
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       RemoteNotification? notification = message.notification;
-      AndroidNotification? android = message.notification?.android;
-
-      if (notification != null && android != null) {
+      if (notification != null) {
         flutterLocalNotificationsPlugin.show(
           notification.hashCode,
           notification.title,
           notification.body,
-          NotificationDetails(
+          const NotificationDetails(
             android: AndroidNotificationDetails(
               'kryros_notifications',
               'KRYROS Notifications',
@@ -358,39 +392,132 @@ class _WebViewPageState extends State<WebViewPage> {
 
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
       if (message.data['url'] != null) {
-        _controller.loadRequest(Uri.parse(message.data['url']));
+        _loadUrl(message.data['url']);
       }
     });
   }
 
-  Future<void> _registerPublicToken() async {
-    if (_fcmToken == null) return;
-    final String jsCode = "if(window.registerPublicToken) window.registerPublicToken('$_fcmToken');";
-    await _controller.runJavaScript(jsCode);
+  void _loadUrl(String url) {
+    _webViewController?.loadUrl(urlRequest: URLRequest(url: WebUri(url)));
   }
 
-  Future<void> _registerTokenWithSession() async {
+  Future<void> _registerTokens() async {
     if (_fcmToken == null) return;
-    final String jsCode = "if(window.registerTokenWithSession) window.registerTokenWithSession('$_fcmToken');";
-    await _controller.runJavaScript(jsCode);
+    // Register public token
+    await _webViewController?.evaluateJavascript(source: "if(window.registerPublicToken) window.registerPublicToken('$_fcmToken');");
+    // Register session token if logged in
+    await _webViewController?.evaluateJavascript(source: "if(window.registerTokenWithSession) window.registerTokenWithSession('$_fcmToken');");
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFF050816),
       body: SafeArea(
-        child: PopScope(
-          canPop: false,
-          onPopInvoked: (didPop) async {
-            if (didPop) return;
-            if (await _controller.canGoBack()) {
-              _controller.goBack();
-            }
-          },
-          child: RefreshIndicator(
-            onRefresh: () => _controller.reload(),
-            child: WebViewWidget(controller: _controller),
-          ),
+        child: Column(
+          children: [
+            if (_progress < 1.0 && !_isOffline)
+              LinearProgressIndicator(
+                value: _progress,
+                color: const Color(0xFF27B9AF),
+                backgroundColor: Colors.transparent,
+                minHeight: 2,
+              ),
+            Expanded(
+              child: Stack(
+                children: [
+                  PopScope(
+                    canPop: false,
+                    onPopInvoked: (didPop) async {
+                      if (didPop) return;
+                      if (await _webViewController?.canGoBack() ?? false) {
+                        _webViewController?.goBack();
+                      }
+                    },
+                    child: InAppWebView(
+                      initialUrlRequest: URLRequest(url: WebUri(widget.url)),
+                      initialSettings: InAppWebViewSettings(
+                        javaScriptEnabled: true,
+                        useShouldOverrideUrlLoading: true,
+                        useOnDownloadStart: true,
+                        allowFileAccessFromFileURLs: true,
+                        allowUniversalAccessFromFileURLs: true,
+                        verticalScrollBarEnabled: false,
+                        horizontalScrollBarEnabled: false,
+                        transparentBackground: true,
+                      ),
+                      pullToRefreshController: _pullToRefreshController,
+                      onWebViewCreated: (controller) {
+                        _webViewController = controller;
+                        controller.addJavaScriptHandler(
+                          handlerName: 'MobileBridge',
+                          callback: (args) {
+                            if (args.isNotEmpty && args[0] == 'user_logged_in') {
+                              _registerTokens();
+                            }
+                          },
+                        );
+                      },
+                      onLoadStop: (controller, url) async {
+                        _pullToRefreshController?.endRefreshing();
+                        setState(() {
+                          _progress = 1.0;
+                        });
+                        widget.onPageFinished();
+                        _registerTokens(); // Attempt registration on every page load
+                      },
+                      onProgressChanged: (controller, progress) {
+                        if (progress == 100) {
+                          _pullToRefreshController?.endRefreshing();
+                        }
+                        setState(() {
+                          _progress = progress / 100;
+                        });
+                      },
+                      shouldOverrideUrlLoading: (controller, navigationAction) async {
+                        var uri = navigationAction.request.url;
+                        if (uri != null && !["http", "https", "file", "chrome", "data", "javascript", "about"].contains(uri.scheme)) {
+                          if (await canLaunchUrl(uri)) {
+                            await launchUrl(uri, mode: LaunchMode.externalApplication);
+                            return NavigationActionPolicy.CANCEL;
+                          }
+                        }
+                        return NavigationActionPolicy.ALLOW;
+                      },
+                    ),
+                  ),
+                  if (_isOffline)
+                    Container(
+                      color: const Color(0xFF050816),
+                      child: Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.wifi_off, color: Colors.white, size: 64),
+                            const SizedBox(height: 16),
+                            const Text(
+                              'No Internet Connection',
+                              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Please check your network settings.',
+                              style: TextStyle(color: Colors.white70),
+                            ),
+                            const SizedBox(height: 24),
+                            ElevatedButton(
+                              onPressed: () => _webViewController?.reload(),
+                              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF27B9AF)),
+                              child: const Text('Retry', style: TextStyle(color: Colors.white)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
