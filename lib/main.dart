@@ -31,15 +31,65 @@ class KryrosUserApp extends StatelessWidget {
       theme: ThemeData(
         primaryColor: const Color(0xFF27B9AF),
         useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF27B9AF),
+          primary: const Color(0xFF27B9AF),
+          background: const Color(0xFF050816),
+        ),
       ),
-      home: const SplashScreen(url: 'https://kryros.com'),
+      home: const MainContainer(url: 'https://kryros.com'),
+    );
+  }
+}
+
+class MainContainer extends StatefulWidget {
+  final String url;
+  const MainContainer({super.key, required this.url});
+
+  @override
+  State<MainContainer> createState() => _MainContainerState();
+}
+
+class _MainContainerState extends State<MainContainer> {
+  bool _showSplash = true;
+  bool _isWebViewReady = false;
+
+  void _onWebViewReady() {
+    if (mounted) {
+      setState(() {
+        _isWebViewReady = true;
+      });
+      // Delay slightly to ensure smooth transition
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) {
+          setState(() {
+            _showSplash = false;
+          });
+        }
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        WebViewPage(
+          url: widget.url,
+          onPageFinished: _onWebViewReady,
+        ),
+        if (_showSplash)
+          SplashScreen(
+            isTransitioning: _isWebViewReady,
+          ),
+      ],
     );
   }
 }
 
 class SplashScreen extends StatefulWidget {
-  final String url;
-  const SplashScreen({super.key, required this.url});
+  final bool isTransitioning;
+  const SplashScreen({super.key, this.isTransitioning = false});
 
   @override
   State<SplashScreen> createState() => _SplashScreenState();
@@ -49,51 +99,25 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
   late AnimationController _pulseController;
   late AnimationController _blinkController;
   late AnimationController _bounceController;
-  bool _isFadingOut = false;
 
   @override
   void initState() {
     super.initState();
     
-    // Pulse rings animation
     _pulseController = AnimationController(
       duration: const Duration(seconds: 2),
       vsync: this,
     )..repeat();
 
-    // Blink logo and text animation
     _blinkController = AnimationController(
       duration: const Duration(milliseconds: 1600),
       vsync: this,
     )..repeat(reverse: true);
 
-    // Bouncing dots animation
     _bounceController = AnimationController(
       duration: const Duration(milliseconds: 900),
       vsync: this,
     )..repeat();
-
-    // Navigation timer
-    Timer(const Duration(milliseconds: 2200), () {
-      if (mounted) {
-        setState(() {
-          _isFadingOut = true;
-        });
-        Timer(const Duration(milliseconds: 400), () {
-          if (mounted) {
-            Navigator.of(context).pushReplacement(
-              PageRouteBuilder(
-                pageBuilder: (context, animation, secondaryAnimation) => WebViewPage(url: widget.url),
-                transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                  return FadeTransition(opacity: animation, child: child);
-                },
-                transitionDuration: const Duration(milliseconds: 400),
-              ),
-            );
-          }
-        });
-      }
-    });
   }
 
   @override
@@ -112,13 +136,12 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
     return Scaffold(
       backgroundColor: backgroundColor,
       body: AnimatedOpacity(
-        opacity: _isFadingOut ? 0.0 : 1.0,
-        duration: const Duration(milliseconds: 400),
+        opacity: widget.isTransitioning ? 0.0 : 1.0,
+        duration: const Duration(milliseconds: 500),
         child: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Pulsing rings around logo
               Stack(
                 alignment: Alignment.center,
                 children: [
@@ -155,9 +178,8 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                       },
                     );
                   }),
-                  // Logo with blink effect
                   FadeTransition(
-                    opacity: Tween<double>(begin: 1.0, end: 0.45).animate(
+                    opacity: Tween<double>(begin: 1.0, end: 0.4).animate(
                       CurvedAnimation(parent: _blinkController, curve: Curves.easeInOut),
                     ),
                     child: Container(
@@ -172,8 +194,8 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                       child: ClipOval(
                         child: Image.asset(
                           'assets/logo_circular.png',
-                          width: 60,
-                          height: 60,
+                          width: 70,
+                          height: 70,
                           fit: BoxFit.cover,
                         ),
                       ),
@@ -181,55 +203,52 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                   ),
                 ],
               ),
-              const SizedBox(height: 28),
-              // Brand name with blink effect
+              const SizedBox(height: 32),
               FadeTransition(
-                opacity: Tween<double>(begin: 1.0, end: 0.45).animate(
+                opacity: Tween<double>(begin: 1.0, end: 0.5).animate(
                   CurvedAnimation(
                     parent: _blinkController,
-                    curve: const Interval(0.125, 1.0, curve: Curves.easeInOut),
+                    curve: const Interval(0.2, 1.0, curve: Curves.easeInOut),
                   ),
                 ),
                 child: const Text(
                   'KRYROS',
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: 22,
+                    fontSize: 26,
                     fontWeight: FontWeight.w900,
-                    letterSpacing: 2.6, // 0.12em
-                    fontFamily: 'sans-serif',
+                    letterSpacing: 4.0,
                   ),
                 ),
               ),
-              const SizedBox(height: 20),
-              // Bouncing loading dots
+              const SizedBox(height: 24),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: List.generate(3, (index) {
                   return AnimatedBuilder(
                     animation: _bounceController,
                     builder: (context, child) {
-                      final delay = index * 0.18;
+                      final delay = index * 0.2;
                       double progress = (_bounceController.value - delay);
                       if (progress < 0) progress += 1.0;
 
                       final yOffset = progress < 0.5
-                          ? -8.0 * (progress / 0.5)
-                          : -8.0 * (1.0 - (progress - 0.5) / 0.5);
+                          ? -10.0 * (progress / 0.5)
+                          : -10.0 * (1.0 - (progress - 0.5) / 0.5);
                       
                       final opacity = progress < 0.5
-                          ? 0.35 + (0.65 * (progress / 0.5))
-                          : 1.0 - (0.65 * ((progress - 0.5) / 0.5));
+                          ? 0.4 + (0.6 * (progress / 0.5))
+                          : 1.0 - (0.6 * ((progress - 0.5) / 0.5));
 
                       return Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 3.5),
+                        padding: const EdgeInsets.symmetric(horizontal: 4.0),
                         child: Transform.translate(
                           offset: Offset(0, yOffset),
                           child: Opacity(
-                            opacity: opacity.clamp(0.35, 1.0),
+                            opacity: opacity.clamp(0.4, 1.0),
                             child: Container(
-                              width: 6,
-                              height: 6,
+                              width: 8,
+                              height: 8,
                               decoration: const BoxDecoration(
                                 color: primaryColor,
                                 shape: BoxShape.circle,
@@ -252,16 +271,15 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
 
 class WebViewPage extends StatefulWidget {
   final String url;
-  const WebViewPage({super.key, required this.url});
+  final VoidCallback onPageFinished;
+  const WebViewPage({super.key, required this.url, required this.onPageFinished});
 
   @override
   State<WebViewPage> createState() => _WebViewPageState();
 }
 
-class _WebViewPageState extends State<WebViewPage> with SingleTickerProviderStateMixin {
+class _WebViewPageState extends State<WebViewPage> {
   late final WebViewController _controller;
-  bool _isLoading = true;
-  late AnimationController _loadingController;
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
   String? _fcmToken;
 
@@ -269,25 +287,14 @@ class _WebViewPageState extends State<WebViewPage> with SingleTickerProviderStat
   void initState() {
     super.initState();
     _setupNotifications();
-    _loadingController = AnimationController(
-      duration: const Duration(milliseconds: 1500),
-      vsync: this,
-    )..repeat();
-
+    
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(const Color(0x00000000))
+      ..setBackgroundColor(const Color(0xFF050816))
       ..setNavigationDelegate(
         NavigationDelegate(
-          onPageStarted: (String url) {
-            setState(() {
-              _isLoading = true;
-            });
-          },
           onPageFinished: (String url) {
-            setState(() {
-              _isLoading = false;
-            });
+            widget.onPageFinished();
           },
         ),
       )
@@ -303,7 +310,6 @@ class _WebViewPageState extends State<WebViewPage> with SingleTickerProviderStat
   }
 
   Future<void> _setupNotifications() async {
-    // Request permissions
     FirebaseMessaging messaging = FirebaseMessaging.instance;
     await messaging.requestPermission(
       alert: true,
@@ -311,21 +317,22 @@ class _WebViewPageState extends State<WebViewPage> with SingleTickerProviderStat
       sound: true,
     );
 
-    // Get token for backend registration
     _fcmToken = await messaging.getToken();
-    debugPrint("FCM Token: $_fcmToken");
-
-    // Initial public registration (guest)
     if (_fcmToken != null) {
       _registerPublicToken();
     }
 
-    // Local notifications setup
     const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings('launcher_icon');
     const InitializationSettings initializationSettings = InitializationSettings(android: initializationSettingsAndroid);
-    await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+    await flutterLocalNotificationsPlugin.initialize(
+      initializationSettings,
+      onDidReceiveNotificationResponse: (NotificationResponse response) {
+        if (response.payload != null) {
+          _controller.loadRequest(Uri.parse(response.payload!));
+        }
+      },
+    );
 
-    // Listen for messages while app is in foreground
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       RemoteNotification? notification = message.notification;
       AndroidNotification? android = message.notification?.android;
@@ -335,7 +342,7 @@ class _WebViewPageState extends State<WebViewPage> with SingleTickerProviderStat
           notification.hashCode,
           notification.title,
           notification.body,
-          const NotificationDetails(
+          NotificationDetails(
             android: AndroidNotificationDetails(
               'kryros_notifications',
               'KRYROS Notifications',
@@ -344,92 +351,48 @@ class _WebViewPageState extends State<WebViewPage> with SingleTickerProviderStat
               icon: 'launcher_icon',
             ),
           ),
+          payload: message.data['url'],
         );
+      }
+    });
+
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      if (message.data['url'] != null) {
+        _controller.loadRequest(Uri.parse(message.data['url']));
       }
     });
   }
 
   Future<void> _registerPublicToken() async {
     if (_fcmToken == null) return;
-    debugPrint("Registering Public FCM token: $_fcmToken");
-    
-    final String jsCode = """
-      (function() {
-        fetch('/api/notifications/token/public', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: '$_fcmToken', platform: 'android' })
-        })
-        .then(response => console.log('Public Token registered:', response.status))
-        .catch(error => console.error('Public Token registration failed:', error));
-      })();
-    """;
-    
+    final String jsCode = "if(window.registerPublicToken) window.registerPublicToken('$_fcmToken');";
     await _controller.runJavaScript(jsCode);
   }
 
   Future<void> _registerTokenWithSession() async {
     if (_fcmToken == null) return;
-    
-    debugPrint("Registering FCM token via JS Bridge: $_fcmToken");
-    
-    final String jsCode = """
-      (function() {
-        fetch('/api/notifications/token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: '$_fcmToken', platform: 'android' })
-        })
-        .then(response => console.log('Token registered:', response.status))
-        .catch(error => console.error('Token registration failed:', error));
-      })();
-    """;
-    
+    final String jsCode = "if(window.registerTokenWithSession) window.registerTokenWithSession('$_fcmToken');";
     await _controller.runJavaScript(jsCode);
-  }
-
-  @override
-  void dispose() {
-    _loadingController.dispose();
-    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: Stack(
-          children: [
-            WebViewWidget(controller: _controller),
-            if (_isLoading)
-              Container(
-                color: const Color(0xFF050816).withOpacity(0.7),
-                child: Center(
-                  child: AnimatedBuilder(
-                    animation: _loadingController,
-                    builder: (context, child) {
-                      return Container(
-                        width: 80,
-                        height: 80,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: const Color(0xFF27B9AF).withOpacity(
-                              0.3 + (0.7 * _loadingController.value),
-                            ),
-                            width: 4,
-                          ),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(8.0),
-                          child: ClipOval(child: Image.asset('assets/logo_circular.png')),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ),
-          ],
+        child: PopScope(
+          canPop: false,
+          onPopInvoked: (didPop) async {
+            if (didPop) return;
+            if (await _controller.canGoBack()) {
+              _controller.goBack();
+            } else {
+              // Optionally handle app exit confirmation
+            }
+          },
+          child: RefreshIndicator(
+            onRefresh: () => _controller.reload(),
+            child: WebViewWidget(controller: _controller),
+          ),
         ),
       ),
     );
