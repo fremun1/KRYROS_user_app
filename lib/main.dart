@@ -160,11 +160,23 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                     opacity: Tween<double>(begin: 1.0, end: 0.45).animate(
                       CurvedAnimation(parent: _blinkController, curve: Curves.easeInOut),
                     ),
-                    child: Image.asset(
-                      'assets/logo.png',
-                      width: 60,
-                      height: 60,
-                      fit: BoxFit.contain,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: primaryColor.withOpacity(0.8),
+                          width: 2.0,
+                        ),
+                      ),
+                      child: ClipOval(
+                        child: Image.asset(
+                          'assets/logo_circular.png',
+                          width: 60,
+                          height: 60,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
                     ),
                   ),
                 ],
@@ -386,7 +398,7 @@ class _WebViewPageState extends State<WebViewPage> with SingleTickerProviderStat
                         ),
                         child: Padding(
                           padding: const EdgeInsets.all(8.0),
-                          child: Image.asset('assets/logo.png'),
+                          child: ClipOval(child: Image.asset('assets/logo_circular.png')),
                         ),
                       );
                     },
