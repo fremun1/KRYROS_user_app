@@ -18,9 +18,12 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
-  
-  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  try {
+    await Firebase.initializeApp();
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  } catch (e) {
+    debugPrint("Firebase initialization failed: $e");
+  }
   
   // Request notification permissions for Android 13+
   if (Platform.isAndroid) {
@@ -484,6 +487,13 @@ class _WebViewPageState extends State<WebViewPage> {
                         verticalScrollBarEnabled: false,
                         horizontalScrollBarEnabled: false,
                         transparentBackground: true,
+                        domStorageEnabled: true,
+                        databaseEnabled: true,
+                        mediaPlaybackRequiresUserGesture: false,
+                        javaScriptCanOpenWindowsAutomatically: true,
+                        cacheEnabled: true,
+                        clearCache: false,
+                        supportZoom: false,
                       ),
                       pullToRefreshController: _pullToRefreshController,
                       onWebViewCreated: (controller) {
