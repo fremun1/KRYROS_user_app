@@ -7,6 +7,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 // Background message handler
@@ -301,6 +302,10 @@ class _WebViewPageState extends State<WebViewPage> {
   bool _isOffline = false;
   String? _fcmToken;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+  StreamSubscription<String>? _tokenRefreshSubscription;
+
+  static const _notificationTokenEndpoint =
+      'https://api.kryros.com/api/notifications/token/public';
 
   @override
   void initState() {
@@ -335,6 +340,7 @@ class _WebViewPageState extends State<WebViewPage> {
   @override
   void dispose() {
     _connectivitySubscription?.cancel();
+    _tokenRefreshSubscription?.cancel();
     super.dispose();
   }
 
@@ -350,7 +356,15 @@ class _WebViewPageState extends State<WebViewPage> {
     await messaging.requestPermission(alert: true, badge: true, sound: true);
 
     _fcmToken = await messaging.getToken();
-    
+    if (_fcmToken != null) {
+      await _registerNativeToken(_fcmToken!);
+    }
+    _tokenRefreshSubscription = messaging.onTokenRefresh.listen((token) async {
+      _fcmToken = token;
+      await _registerNativeToken(token);
+      await _registerTokens();
+    });
+
     // Handle Initial Message (When app is closed)
     RemoteMessage? initialMessage = await FirebaseMessaging.instance.getInitialMessage();
     if (initialMessage != null && initialMessage.data['url'] != null) {
@@ -397,16 +411,41 @@ class _WebViewPageState extends State<WebViewPage> {
     });
   }
 
+  Future<void> _registerNativeToken(String token) async {
+    final client = HttpClient();
+    try {
+      final request = await client.postUrl(Uri.parse(_notificationTokenEndpoint));
+      request.headers.contentType = ContentType.json;
+      request.write(jsonEncode({
+        'token': token,
+        'platform': Platform.isIOS ? 'ios' : 'android',
+      }));
+      final response = await request.close();
+      await response.drain();
+    } catch (_) {
+      // A transient network failure is retried on token refresh and page load.
+    } finally {
+      client.close(force: true);
+    }
+  }
+
   void _loadUrl(String url) {
-    _webViewController?.loadUrl(urlRequest: URLRequest(url: WebUri(url)));
+    final target = Uri.tryParse(url)?.hasScheme == true
+        ? url
+        : Uri.parse(widget.url).resolve(url).toString();
+    _webViewController?.loadUrl(urlRequest: URLRequest(url: WebUri(target)));
   }
 
   Future<void> _registerTokens() async {
-    if (_fcmToken == null) return;
-    // Register public token
-    await _webViewController?.evaluateJavascript(source: "if(window.registerPublicToken) window.registerPublicToken('$_fcmToken');");
-    // Register session token if logged in
-    await _webViewController?.evaluateJavascript(source: "if(window.registerTokenWithSession) window.registerTokenWithSession('$_fcmToken');");
+    final token = _fcmToken;
+    if (token == null || _webViewController == null) return;
+
+    await _registerNativeToken(token);
+    final encodedToken = jsonEncode(token);
+    await _webViewController?.evaluateJavascript(source: '''
+      window.kryrosNativeFcmToken = $encodedToken;
+      window.dispatchEvent(new CustomEvent('kryros:native-fcm-token', { detail: $encodedToken }));
+    ''');
   }
 
   @override
