@@ -221,6 +221,8 @@ class _WebViewPageState extends State<WebViewPage> {
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
   double _progress = 0;
   bool _isOffline = false;
+  bool _isWebViewReady = false;          // tracks whether WebView has finished first load
+  String? _pendingDeepLinkUrl;           // URL to navigate to once WebView is ready
   String? _fcmToken;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   StreamSubscription<String>? _tokenRefreshSubscription;
@@ -266,38 +268,107 @@ class _WebViewPageState extends State<WebViewPage> {
       await _registerNativeToken(token);
       await _registerTokens();
     });
-    RemoteMessage? initialMessage = await FirebaseMessaging.instance.getInitialMessage();
-    if (initialMessage != null) {
-      String? url = initialMessage.data['url'] ?? initialMessage.data['link'];
-      if (url != null) _loadUrl(url);
-    }
-    const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings('launcher_icon');
-    const InitializationSettings initializationSettings = InitializationSettings(android: initializationSettingsAndroid);
+
+    // ── Local notifications (foreground) ──────────────────────────────────────
+    const AndroidInitializationSettings initializationSettingsAndroid =
+        AndroidInitializationSettings('launcher_icon');
+    const DarwinInitializationSettings initializationSettingsIOS =
+        DarwinInitializationSettings(
+          requestAlertPermission: true,
+          requestBadgePermission: true,
+          requestSoundPermission: true,
+        );
+    const InitializationSettings initializationSettings = InitializationSettings(
+      android: initializationSettingsAndroid,
+      iOS: initializationSettingsIOS,
+    );
     await flutterLocalNotificationsPlugin.initialize(
       initializationSettings,
       onDidReceiveNotificationResponse: (response) {
-        if (response.payload != null) _loadUrl(response.payload!);
+        // Payload is the deep-link URL stored when the notification was shown
+        if (response.payload != null && response.payload!.isNotEmpty) {
+          _navigateToUrl(response.payload!);
+        }
       },
     );
+
+    // ── App opened from a terminated state via notification ───────────────────
+    // getInitialMessage() is called BEFORE the WebView is ready, so we store
+    // the URL and navigate once onLoadStop fires.
+    RemoteMessage? initialMessage = await FirebaseMessaging.instance.getInitialMessage();
+    if (initialMessage != null) {
+      final String? url = initialMessage.data['url'] ?? initialMessage.data['link'];
+      if (url != null && url.isNotEmpty) {
+        // Queue it — WebView may not be ready yet
+        _pendingDeepLinkUrl = url;
+      }
+    }
+
+    // ── App in foreground — show local notification with payload ──────────────
     FirebaseMessaging.onMessage.listen((message) async {
-      RemoteNotification? notification = message.notification;
+      final RemoteNotification? notification = message.notification;
       if (notification != null) {
-        String? imageUrl = message.data['image'] ?? message.data['imageUrl'] ?? notification.android?.imageUrl;
-        String? payload = message.data['url'] ?? message.data['link'];
+        final String? imageUrl =
+            message.data['imageUrl'] ?? message.data['image'] ?? notification.android?.imageUrl;
+        final String? payload = message.data['url'] ?? message.data['link'];
         BigPictureStyleInformation? bigPictureStyleInformation;
-        if (imageUrl != null) {
+        if (imageUrl != null && imageUrl.isNotEmpty) {
           try {
-            final String filePath = await _downloadAndSaveFile(imageUrl, 'notification_image');
-            bigPictureStyleInformation = BigPictureStyleInformation(FilePathAndroidBitmap(filePath), largeIcon: FilePathAndroidBitmap(filePath), contentTitle: notification.title, summaryText: notification.body);
-          } catch (e) { debugPrint("Failed to download notification image: $e"); }
+            final String filePath = await _downloadAndSaveFile(imageUrl, 'notif_banner_${notification.hashCode}');
+            bigPictureStyleInformation = BigPictureStyleInformation(
+              FilePathAndroidBitmap(filePath),
+              largeIcon: FilePathAndroidBitmap(filePath),
+              contentTitle: notification.title,
+              summaryText: notification.body,
+            );
+          } catch (e) {
+            debugPrint('Failed to download notification banner image: $e');
+          }
         }
-        flutterLocalNotificationsPlugin.show(notification.hashCode, notification.title, notification.body, NotificationDetails(android: AndroidNotificationDetails('kryros_notifications', 'KRYROS Notifications', importance: Importance.max, priority: Priority.high, icon: 'launcher_icon', styleInformation: bigPictureStyleInformation)), payload: payload);
+        await flutterLocalNotificationsPlugin.show(
+          notification.hashCode,
+          notification.title,
+          notification.body,
+          NotificationDetails(
+            android: AndroidNotificationDetails(
+              'kryros_notifications',
+              'KRYROS Notifications',
+              importance: Importance.max,
+              priority: Priority.high,
+              icon: 'launcher_icon',
+              styleInformation: bigPictureStyleInformation,
+            ),
+            iOS: const DarwinNotificationDetails(
+              presentAlert: true,
+              presentBadge: true,
+              presentSound: true,
+            ),
+          ),
+          // Store the deep-link URL as the payload so tapping navigates correctly
+          payload: (payload != null && payload.isNotEmpty) ? payload : null,
+        );
       }
     });
+
+    // ── App in background, user taps notification ─────────────────────────────
     FirebaseMessaging.onMessageOpenedApp.listen((message) {
-      String? url = message.data['url'] ?? message.data['link'];
-      if (url != null) _loadUrl(url);
+      final String? url = message.data['url'] ?? message.data['link'];
+      if (url != null && url.isNotEmpty) {
+        _navigateToUrl(url);
+      }
     });
+  }
+
+  /// Navigate to [url] immediately if the WebView is ready, otherwise queue it.
+  /// This prevents the race condition where getInitialMessage fires before
+  /// the WebView controller is initialised.
+  void _navigateToUrl(String url) {
+    if (_isWebViewReady && _webViewController != null) {
+      _loadUrl(url);
+    } else {
+      // Will be consumed in onLoadStop once the WebView finishes loading
+      _pendingDeepLinkUrl = url;
+    }
   }
 
   Future<String> _downloadAndSaveFile(String url, String fileName) async {
@@ -367,6 +438,20 @@ class _WebViewPageState extends State<WebViewPage> {
                         widget.onPageFinished();
                         _registerTokens();
                         await controller.evaluateJavascript(source: "if (document.getElementById('root') && document.getElementById('root').innerHTML === '') { localStorage.clear(); window.location.reload(true); }");
+
+                        // Mark WebView as ready and flush any pending deep-link navigation
+                        // (e.g. from a notification tap while the app was terminated)
+                        if (!_isWebViewReady) {
+                          _isWebViewReady = true;
+                          if (_pendingDeepLinkUrl != null) {
+                            final pending = _pendingDeepLinkUrl!;
+                            _pendingDeepLinkUrl = null;
+                            // Small delay to let the page fully render before navigating
+                            Future.delayed(const Duration(milliseconds: 500), () {
+                              if (mounted) _loadUrl(pending);
+                            });
+                          }
+                        }
                       },
                       onReceivedError: (controller, request, error) { debugPrint("WebView Error: ${error.description}"); _pullToRefreshController?.endRefreshing(); },
                       onProgressChanged: (controller, progress) { if (progress == 100) _pullToRefreshController?.endRefreshing(); setState(() => _progress = progress / 100); },
