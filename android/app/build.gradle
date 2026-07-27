@@ -26,7 +26,7 @@ if (flutterVersionName == null) {
 
 android {
     namespace = "com.kryros.kryros_mobile"
-    compileSdk = 35
+    compileSdk = 36
     ndkVersion = "25.1.8937393"
 
     compileOptions {
