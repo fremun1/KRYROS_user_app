@@ -425,7 +425,29 @@ class _WebViewPageState extends State<WebViewPage> {
                     child: InAppWebView(
                       initialUrlRequest: URLRequest(url: WebUri(widget.url)),
                       initialSettings: InAppWebViewSettings(
-                        javaScriptEnabled: true, useShouldOverrideUrlLoading: true, useOnDownloadStart: true, allowFileAccessFromFileURLs: true, allowUniversalAccessFromFileURLs: true, verticalScrollBarEnabled: false, horizontalScrollBarEnabled: false, transparentBackground: true, domStorageEnabled: true, databaseEnabled: true, mediaPlaybackRequiresUserGesture: false, javaScriptCanOpenWindowsAutomatically: true, cacheEnabled: true, clearCache: false, supportZoom: false, preferredContentMode: UserPreferredContentMode.MOBILE, userAgent: "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36 KryrosApp/1.0.6", mixedContentMode: MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW, allowContentAccess: true, builtInZoomControls: false, displayZoomControls: false, cacheMode: CacheMode.LOAD_DEFAULT,
+                        javaScriptEnabled: true,
+                        useShouldOverrideUrlLoading: true,
+                        useOnDownloadStart: true,
+                        allowFileAccessFromFileURLs: true,
+                        allowUniversalAccessFromFileURLs: true,
+                        verticalScrollBarEnabled: false,
+                        horizontalScrollBarEnabled: false,
+                        transparentBackground: true,
+                        domStorageEnabled: true,
+                        databaseEnabled: true,
+                        mediaPlaybackRequiresUserGesture: false,
+                        javaScriptCanOpenWindowsAutomatically: true,
+                        cacheEnabled: true,
+                        clearCache: false,
+                        supportZoom: false,
+                        preferredContentMode: UserPreferredContentMode.MOBILE,
+                        userAgent: "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36 KryrosApp/1.0.6",
+                        mixedContentMode: MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
+                        allowContentAccess: true,
+                        builtInZoomControls: false,
+                        displayZoomControls: false,
+                        cacheMode: CacheMode.LOAD_DEFAULT,
+                        hardwareAcceleration: true,
                       ),
                       pullToRefreshController: _pullToRefreshController,
                       onWebViewCreated: (controller) {
@@ -437,7 +459,23 @@ class _WebViewPageState extends State<WebViewPage> {
                         setState(() => _progress = 1.0);
                         widget.onPageFinished();
                         _registerTokens();
-                        await controller.evaluateJavascript(source: "if (document.getElementById('root') && document.getElementById('root').innerHTML === '') { localStorage.clear(); window.location.reload(true); }");
+
+                        // More robust blank page detection and recovery
+                        final rootCheck = await controller.evaluateJavascript(source: """
+                          (function() {
+                            const root = document.getElementById('root');
+                            if (!root) return 'no-root';
+                            if (root.children.length === 0 && root.innerText.trim() === '') return 'empty';
+                            return 'ok';
+                          })()
+                        """);
+
+                        if (rootCheck == 'no-root' || rootCheck == 'empty') {
+                          debugPrint("WebView detected blank page ($rootCheck), attempting recovery...");
+                          // Clear storage and hard reload
+                          await controller.evaluateJavascript(source: "localStorage.clear(); sessionStorage.clear();");
+                          await controller.reload();
+                        }
 
                         // Mark WebView as ready and flush any pending deep-link navigation
                         // (e.g. from a notification tap while the app was terminated)
