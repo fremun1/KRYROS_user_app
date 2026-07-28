@@ -70,8 +70,8 @@ class _MainContainerState extends State<MainContainer> {
         _isWebViewReady = true;
       });
       // Delay to ensure WebView is actually rendered before hiding splash
-      // Reduced delay to make it feel faster, but enough to avoid flash
-      Future.delayed(const Duration(milliseconds: 1200), () {
+      // We use a slightly longer delay if the first load was very fast
+      Future.delayed(const Duration(milliseconds: 1500), () {
         if (mounted) {
           setState(() {
             _showSplash = false;
@@ -440,7 +440,7 @@ class _WebViewPageState extends State<WebViewPage> {
                         clearCache: false,
                         supportZoom: false,
                         preferredContentMode: UserPreferredContentMode.MOBILE,
-                        userAgent: "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36",
+                        userAgent: "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36 KryrosApp",
                         mixedContentMode: MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
                         allowContentAccess: true,
                         builtInZoomControls: false,
