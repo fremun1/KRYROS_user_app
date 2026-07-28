@@ -288,7 +288,10 @@ class _WebViewPageState extends State<WebViewPage> {
       onDidReceiveNotificationResponse: (response) {
         debugPrint("Notification tapped (foreground): ${response.payload}");
         if (response.payload != null && response.payload!.isNotEmpty) {
-          _navigateToUrl(response.payload!);
+          // Use a small delay for foreground taps to ensure the app is focused
+          Future.delayed(const Duration(milliseconds: 500), () {
+            _navigateToUrl(response.payload!);
+          });
         }
       },
     );
@@ -391,11 +394,36 @@ class _WebViewPageState extends State<WebViewPage> {
   void _loadUrl(String url) {
     if (url.isEmpty) return;
     debugPrint("WebView loading: $url");
-    // Handle both relative and absolute URLs
+    
     String target = url;
-    if (!Uri.parse(url).hasScheme) {
-      target = Uri.parse(widget.url).resolve(url).toString();
+    
+    // If it's a full URL starting with http, use it directly
+    if (url.startsWith('http')) {
+      target = url;
+    } else {
+      // It's a relative path, resolve it against the base URL
+      try {
+        final baseUri = Uri.parse(widget.url);
+        // Ensure the path starts with / for resolution
+        final path = url.startsWith('/') ? url : '/$url';
+        target = baseUri.replace(path: path, query: null, fragment: null).resolve(path).toString();
+        
+        // If there were query params in the original relative url, preserve them
+        if (url.contains('?')) {
+          final query = url.split('?')[1];
+          if (target.contains('?')) {
+            target += '&$query';
+          } else {
+            target += '?$query';
+          }
+        }
+      } catch (e) {
+        debugPrint("Error resolving relative URL: $e");
+        target = widget.url + (url.startsWith('/') ? url : '/$url');
+      }
     }
+    
+    debugPrint("Final resolved target: $target");
     _webViewController?.loadUrl(urlRequest: URLRequest(url: WebUri(target)));
   }
 
@@ -477,14 +505,23 @@ class _WebViewPageState extends State<WebViewPage> {
                           _isWebViewReady = true;
                         }
                         
+                        // Always check for pending deep link on every page load finish
+                        // to handle cases where the initial load was just the base URL
                         if (_pendingDeepLinkUrl != null) {
                           final pending = _pendingDeepLinkUrl!;
-                          _pendingDeepLinkUrl = null;
                           debugPrint("Processing pending deep link: $pending");
-                          // Wait for React hydration before redirecting
-                          Future.delayed(const Duration(milliseconds: 2000), () {
-                            if (mounted) _loadUrl(pending);
-                          });
+                          
+                          // If we are already on the target page, clear it
+                          if (url.toString().contains(pending)) {
+                            debugPrint("Already on target page, clearing pending link");
+                            _pendingDeepLinkUrl = null;
+                          } else {
+                            _pendingDeepLinkUrl = null;
+                            // Wait for React hydration before redirecting
+                            Future.delayed(const Duration(milliseconds: 2000), () {
+                              if (mounted) _loadUrl(pending);
+                            });
+                          }
                         }
                       },
                       onReceivedError: (controller, request, error) { debugPrint("WebView Error: ${error.description}"); _pullToRefreshController?.endRefreshing(); },
