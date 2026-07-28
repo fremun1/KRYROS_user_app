@@ -402,7 +402,14 @@ class _WebViewPageState extends State<WebViewPage> {
     if (token == null || _webViewController == null) return;
     await _registerNativeToken(token);
     final encodedToken = jsonEncode(token);
-    await _webViewController?.evaluateJavascript(source: "window.kryrosNativeFcmToken = $encodedToken; window.dispatchEvent(new CustomEvent('kryros:native-fcm-token', { detail: $encodedToken }));");
+    // Set window.kryrosIsNativeApp = true so the website JS skips re-registering
+    // this token as platform='web', which would overwrite the correct 'android'/'ios'
+    // platform value already sent via the native API.
+    await _webViewController?.evaluateJavascript(source: """
+      window.kryrosIsNativeApp = true;
+      window.kryrosNativeFcmToken = $encodedToken;
+      window.dispatchEvent(new CustomEvent('kryros:native-fcm-token', { detail: $encodedToken }));
+    """);
   }
 
   @override
@@ -460,22 +467,11 @@ class _WebViewPageState extends State<WebViewPage> {
                         widget.onPageFinished();
                         _registerTokens();
 
-                        // More robust blank page detection and recovery
-                        final rootCheck = await controller.evaluateJavascript(source: """
-                          (function() {
-                            const root = document.getElementById('root');
-                            if (!root) return 'no-root';
-                            if (root.children.length === 0 && root.innerText.trim() === '') return 'empty';
-                            return 'ok';
-                          })()
-                        """);
-
-                        if (rootCheck == 'no-root' || rootCheck == 'empty') {
-                          debugPrint("WebView detected blank page ($rootCheck), attempting recovery...");
-                          // Clear storage and hard reload
-                          await controller.evaluateJavascript(source: "localStorage.clear(); sessionStorage.clear();");
-                          await controller.reload();
-                        }
+                        // NOTE: The blank-page detection block was removed.
+                        // It fired immediately on onLoadStop before React had a chance
+                        // to hydrate the #root element, causing an infinite
+                        // localStorage.clear() + reload() loop that prevented the site
+                        // from ever rendering. The site loads correctly on its own.
 
                         // Mark WebView as ready and flush any pending deep-link navigation
                         // (e.g. from a notification tap while the app was terminated)
