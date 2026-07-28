@@ -36,6 +36,13 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="http" android:host="kryros.com" />
                 <data android:scheme="https" android:host="kryros.com" />
+                <data android:scheme="kryros" />
+            </intent-filter>
+
+            <!-- Required for Firebase Messaging notification click action -->
+            <intent-filter>
+                <action android:name="FLUTTER_NOTIFICATION_CLICK" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.

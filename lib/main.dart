@@ -353,10 +353,18 @@ class _WebViewPageState extends State<WebViewPage> {
 
   void _navigateToUrl(String url) {
     debugPrint("Routing to URL: $url");
+    if (url.isEmpty) return;
+    
+    // If it's a relative path, ensure it starts with /
+    String target = url;
+    if (!url.startsWith('http') && !url.startsWith('/')) {
+      target = '/$url';
+    }
+
     if (_isWebViewReady && _webViewController != null) {
-      _loadUrl(url);
+      _loadUrl(target);
     } else {
-      _pendingDeepLinkUrl = url;
+      _pendingDeepLinkUrl = target;
     }
   }
 
@@ -467,14 +475,16 @@ class _WebViewPageState extends State<WebViewPage> {
 
                         if (!_isWebViewReady) {
                           _isWebViewReady = true;
-                          if (_pendingDeepLinkUrl != null) {
-                            final pending = _pendingDeepLinkUrl!;
-                            _pendingDeepLinkUrl = null;
-                            // Wait for React hydration before redirecting
-                            Future.delayed(const Duration(milliseconds: 1500), () {
-                              if (mounted) _loadUrl(pending);
-                            });
-                          }
+                        }
+                        
+                        if (_pendingDeepLinkUrl != null) {
+                          final pending = _pendingDeepLinkUrl!;
+                          _pendingDeepLinkUrl = null;
+                          debugPrint("Processing pending deep link: $pending");
+                          // Wait for React hydration before redirecting
+                          Future.delayed(const Duration(milliseconds: 2000), () {
+                            if (mounted) _loadUrl(pending);
+                          });
                         }
                       },
                       onReceivedError: (controller, request, error) { debugPrint("WebView Error: ${error.description}"); _pullToRefreshController?.endRefreshing(); },
