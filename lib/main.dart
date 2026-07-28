@@ -70,7 +70,8 @@ class _MainContainerState extends State<MainContainer> {
         _isWebViewReady = true;
       });
       // Delay to ensure WebView is actually rendered before hiding splash
-      Future.delayed(const Duration(milliseconds: 2000), () {
+      // Reduced delay to make it feel faster, but enough to avoid flash
+      Future.delayed(const Duration(milliseconds: 1200), () {
         if (mounted) {
           setState(() {
             _showSplash = false;
@@ -431,7 +432,8 @@ class _WebViewPageState extends State<WebViewPage> {
                         allowUniversalAccessFromFileURLs: true,
                         verticalScrollBarEnabled: false,
                         horizontalScrollBarEnabled: false,
-                        transparentBackground: false, // Force false to prevent white screen
+                        transparentBackground: false, 
+                        backgroundColor: const Color(0xFF050816), // Match app background
                         mediaPlaybackRequiresUserGesture: false,
                         javaScriptCanOpenWindowsAutomatically: true,
                         cacheEnabled: true,
