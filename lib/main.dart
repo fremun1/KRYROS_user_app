@@ -432,8 +432,7 @@ class _WebViewPageState extends State<WebViewPage> {
                         allowUniversalAccessFromFileURLs: true,
                         verticalScrollBarEnabled: false,
                         horizontalScrollBarEnabled: false,
-                        transparentBackground: false, 
-                        backgroundColor: const Color(0xFF050816), // Match app background
+                        transparentBackground: true, 
                         mediaPlaybackRequiresUserGesture: false,
                         javaScriptCanOpenWindowsAutomatically: true,
                         cacheEnabled: true,
