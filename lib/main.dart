@@ -365,8 +365,15 @@ class _WebViewPageState extends State<WebViewPage> {
     if (url.isEmpty) return;
 
     String target = url;
+    
+    // If it's a relative path, ensure it starts with /
     if (!url.startsWith('http') && !url.startsWith('/')) {
       target = '/$url';
+    }
+
+    // Special case for tracking links that might be missing the track prefix
+    if (target.contains('orderNumber=') && !target.contains('/track')) {
+      target = '/track${target.startsWith('/') ? '' : '/'}$target';
     }
 
     if (_isWebViewReady && _webViewController != null) {
@@ -429,12 +436,12 @@ class _WebViewPageState extends State<WebViewPage> {
 
       // Extract token from cookies to see if we are authenticated
       final cookieManager = CookieManager.instance();
-      final cookies = await cookieManager.getCookies(url: WebUri(baseUrl));
+      final cookies = await cookieManager.getCookies(url: WebUri(widget.url));
       final hasToken = cookies.any((c) => c.name == 'kryros_token' || c.name == 'token');
 
       if (hasToken) {
         debugPrint("Syncing FCM token with authenticated user...");
-        final String endpoint = "${baseUrl.replaceAll(RegExp(r'/$'), '')}/api/notifications/token";
+        final String endpoint = "${widget.url.replaceAll(RegExp(r'/$'), '')}/api/notifications/token";
         final String? authToken = cookies.firstWhere((c) => c.name == 'kryros_token' || c.name == 'token').value;
 
         await http.post(
