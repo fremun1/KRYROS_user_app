@@ -17,6 +17,7 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
 }
 
+// Holds a deep-link URL that arrived before the WebView was ready.
 String? _globalPendingDeepLink;
 
 void main() async {
@@ -28,6 +29,7 @@ void main() async {
     debugPrint("Firebase initialization failed: $e");
   }
 
+  // Capture deep link from a terminated-app notification tap.
   try {
     final RemoteMessage? initialMessage =
         await FirebaseMessaging.instance.getInitialMessage();
@@ -248,6 +250,9 @@ class _WebViewPageState extends State<WebViewPage> {
   double _progress = 0;
   bool _isOffline = false;
   bool _isWebViewReady = false;
+  // Track whether the initial homepage load has completed so we only consume
+  // the pending deep link after the app is truly ready (not mid-load).
+  bool _initialPageLoaded = false;
   String? _fcmToken;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   StreamSubscription<String>? _tokenRefreshSubscription;
@@ -350,6 +355,7 @@ class _WebViewPageState extends State<WebViewPage> {
       }
     });
 
+    // Background notification tap (app was in background, not terminated).
     FirebaseMessaging.onMessageOpenedApp.listen((message) {
       final String? url = message.data['url'] ?? message.data['link'] ??
           (message.data['click_action'] != 'FLUTTER_NOTIFICATION_CLICK' ? message.data['click_action'] : null);
@@ -373,12 +379,13 @@ class _WebViewPageState extends State<WebViewPage> {
 
     // Special case for tracking links that might be missing the track prefix
     if (target.contains('orderNumber=') && !target.contains('/track')) {
-      target = '/track${target.startsWith('/') ? '' : '/'}$target';
+      target = '/track${target.startsWith('/') ? target : '/$target'}';
     }
 
     if (_isWebViewReady && _webViewController != null) {
       _loadUrl(target);
     } else {
+      // WebView not ready yet — store and consume after initial page loads.
       _globalPendingDeepLink = target;
     }
   }
@@ -429,32 +436,35 @@ class _WebViewPageState extends State<WebViewPage> {
     _webViewController?.loadUrl(urlRequest: URLRequest(url: WebUri(target)));
   }
 
+  /// Link the FCM token to the authenticated user account so the backend can
+  /// target this user by userId (e.g. order status updates, welcome messages).
   Future<void> _syncTokenWithUser() async {
     try {
       final String? token = await FirebaseMessaging.instance.getToken();
       if (token == null) return;
 
-      // Extract token from cookies to see if we are authenticated
+      // Extract auth token from cookies
       final cookieManager = CookieManager.instance();
       final cookies = await cookieManager.getCookies(url: WebUri(widget.url));
-      final hasToken = cookies.any((c) => c.name == 'kryros_token' || c.name == 'token');
+      final tokenCookie = cookies.firstWhere(
+        (c) => c.name == 'kryros_token' || c.name == 'token',
+        orElse: () => Cookie(name: '', value: ''),
+      );
 
-      if (hasToken) {
+      if (tokenCookie.value.isNotEmpty) {
         debugPrint("Syncing FCM token with authenticated user...");
-        final String endpoint = "${widget.url.replaceAll(RegExp(r'/$'), '')}/api/notifications/token";
-        final String? authToken = cookies.firstWhere((c) => c.name == 'kryros_token' || c.name == 'token').value;
-
         await http.post(
-          Uri.parse(endpoint),
+          Uri.parse('https://api.kryros.com/api/notifications/token'),
           headers: {
             "Content-Type": "application/json",
-            "Authorization": "Bearer $authToken",
+            "Authorization": "Bearer ${tokenCookie.value}",
           },
           body: jsonEncode({
             "token": token,
-            "platform": Theme.of(context).platform == TargetPlatform.iOS ? "ios" : "android",
+            "platform": Platform.isIOS ? "ios" : "android",
           }),
         );
+        debugPrint("FCM token synced with user account");
       }
     } catch (e) {
       debugPrint("Error syncing token with user: $e");
@@ -468,10 +478,8 @@ class _WebViewPageState extends State<WebViewPage> {
     // 1. Aggressive WhatsApp check (schemes and domains)
     if (uri.scheme == 'whatsapp' || uri.host.contains('wa.me') || uri.host.contains('whatsapp.com')) {
       try {
-        // Try launching as external application
         bool launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
         if (!launched && (uri.host.contains('wa.me') || uri.host.contains('whatsapp.com'))) {
-          // If wa.me link fails to launch app, try forcing it as an external browser link
           await launchUrl(uri, mode: LaunchMode.externalNonBrowserApplication);
         }
       } catch (e) {
@@ -544,18 +552,35 @@ class _WebViewPageState extends State<WebViewPage> {
                   _pullToRefreshController?.endRefreshing();
                   widget.onPageFinished();
 
-                  // Sync FCM token with authenticated user if we are on a likely post-login page
                   if (url != null) {
                     final urlStr = url.toString();
-                    if (urlStr.contains('/profile') || urlStr.contains('/orders') || urlStr.contains('/dashboard')) {
+
+                    // Sync FCM token with authenticated user on any authenticated page.
+                    // Expanded from just /profile, /orders, /dashboard to also catch
+                    // /account, /checkout, /cart so the token is linked early.
+                    if (urlStr.contains('/profile') ||
+                        urlStr.contains('/orders') ||
+                        urlStr.contains('/dashboard') ||
+                        urlStr.contains('/account') ||
+                        urlStr.contains('/checkout') ||
+                        urlStr.contains('/cart')) {
                       _syncTokenWithUser();
                     }
-                  }
-                  
-                  if (_globalPendingDeepLink != null) {
-                    final path = _globalPendingDeepLink!;
-                    _globalPendingDeepLink = null;
-                    _loadUrl(path);
+
+                    // Consume the pending deep link ONLY after the initial homepage
+                    // has finished loading. This prevents the deep link from being
+                    // swallowed by the homepage load itself.
+                    if (!_initialPageLoaded) {
+                      _initialPageLoaded = true;
+                      if (_globalPendingDeepLink != null) {
+                        final path = _globalPendingDeepLink!;
+                        _globalPendingDeepLink = null;
+                        // Small delay to let the page fully settle before navigating
+                        Future.delayed(const Duration(milliseconds: 300), () {
+                          _loadUrl(path);
+                        });
+                      }
+                    }
                   }
                 },
                 onProgressChanged: (controller, progress) {
