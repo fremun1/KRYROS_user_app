@@ -291,7 +291,6 @@ class _WebViewPageState extends State<WebViewPage> {
     _tokenRefreshSubscription = messaging.onTokenRefresh.listen((token) async {
       _fcmToken = token;
       await _registerNativeToken(token);
-      await _registerTokens();
     });
 
     const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings('launcher_icon');
@@ -417,152 +416,130 @@ class _WebViewPageState extends State<WebViewPage> {
           target = baseUri.replace(path: path, query: null, fragment: null).toString();
         }
       } catch (e) {
-        debugPrint("Error resolving relative URL: $e");
         target = widget.url + (url.startsWith('/') ? url : '/$url');
       }
     }
-    
-    debugPrint("Final resolved target: $target");
     _webViewController?.loadUrl(urlRequest: URLRequest(url: WebUri(target)));
   }
 
-  Future<void> _registerTokens() async {
-    final token = _fcmToken;
-    if (token == null || _webViewController == null) return;
-    await _registerNativeToken(token);
-    final encodedToken = jsonEncode(token);
-    await _webViewController?.evaluateJavascript(source: """
-      window.kryrosIsNativeApp = true;
-      window.kryrosNativeFcmToken = $encodedToken;
-      window.dispatchEvent(new CustomEvent('kryros:native-fcm-token', { detail: $encodedToken }));
-    """);
+  Future<void> _handleExternalLink(Uri uri) async {
+    final String urlString = uri.toString();
+    debugPrint("Intercepted external link: $urlString");
+    
+    // 1. Aggressive WhatsApp check (schemes and domains)
+    if (uri.scheme == 'whatsapp' || uri.host.contains('wa.me') || uri.host.contains('whatsapp.com')) {
+      try {
+        // Try launching as external application
+        bool launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+        if (!launched && (uri.host.contains('wa.me') || uri.host.contains('whatsapp.com'))) {
+          // If wa.me link fails to launch app, try forcing it as an external browser link
+          await launchUrl(uri, mode: LaunchMode.externalNonBrowserApplication);
+        }
+      } catch (e) {
+        debugPrint("Error launching WhatsApp: $e");
+      }
+      return;
+    }
+
+    // 2. Handle other common external schemes
+    if (["tel", "sms", "mailto", "intent"].contains(uri.scheme)) {
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
       body: SafeArea(
-        child: Column(
-          children: [
-            if (_progress < 1.0 && !_isOffline) LinearProgressIndicator(value: _progress, color: const Color(0xFFC0151B), backgroundColor: Colors.transparent, minHeight: 2),
-            Expanded(
-              child: Stack(
-                children: [
-                  PopScope(
-                    canPop: false,
-                    onPopInvoked: (didPop) async {
-                      if (didPop) return;
-                      if (await _webViewController?.canGoBack() ?? false) _webViewController?.goBack();
-                    },
-                    child: InAppWebView(
-                      initialUrlRequest: URLRequest(url: WebUri(widget.url)),
-                      initialSettings: InAppWebViewSettings(
-                        javaScriptEnabled: true,
-                        domStorageEnabled: true,
-                        databaseEnabled: true,
-                        useShouldOverrideUrlLoading: true,
-                        useOnDownloadStart: true,
-                        allowFileAccessFromFileURLs: true,
-                        allowUniversalAccessFromFileURLs: true,
-                        verticalScrollBarEnabled: false,
-                        horizontalScrollBarEnabled: false,
-                        transparentBackground: true, 
-                        mediaPlaybackRequiresUserGesture: false,
-                        javaScriptCanOpenWindowsAutomatically: true,
-                        cacheEnabled: true,
-                        clearCache: false,
-                        supportZoom: false,
-                        preferredContentMode: UserPreferredContentMode.MOBILE,
-                        userAgent: "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36 KryrosApp",
-                        mixedContentMode: MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
-                        allowContentAccess: true,
-                        builtInZoomControls: false,
-                        displayZoomControls: false,
-                        cacheMode: CacheMode.LOAD_DEFAULT,
-                        hardwareAcceleration: true,
-                        safeBrowsingEnabled: false,
-                        allowFileAccess: true,
-                        geolocationEnabled: true,
-                      ),
-                      pullToRefreshController: _pullToRefreshController,
-                      onWebViewCreated: (controller) {
-                        _webViewController = controller;
-                        controller.addJavaScriptHandler(handlerName: 'MobileBridge', callback: (args) { if (args.isNotEmpty && args[0] == 'user_logged_in') _registerTokens(); });
-                      },
-                      onLoadStop: (controller, url) async {
-                        debugPrint("WebView finished loading: $url");
-                        _pullToRefreshController?.endRefreshing();
-                        setState(() => _progress = 1.0);
-                        
-                        widget.onPageFinished();
-                        _registerTokens();
+        child: WillPopScope(
+          onWillPop: () async {
+            if (_webViewController != null && await _webViewController!.canGoBack()) {
+              _webViewController!.goBack();
+              return false;
+            }
+            return true;
+          },
+          child: Stack(
+            children: [
+              InAppWebView(
+                initialUrlRequest: URLRequest(url: WebUri(widget.url)),
+                pullToRefreshController: _pullToRefreshController,
+                initialOptions: InAppWebViewGroupOptions(
+                  crossPlatform: InAppWebViewOptions(
+                    useShouldOverrideUrlLoading: true,
+                    mediaPlaybackRequiresUserGesture: false,
+                    javaScriptEnabled: true,
+                    userAgent: "KRYROS_APP_ANDROID",
+                    supportZoom: false,
+                  ),
+                  android: AndroidInAppWebViewOptions(
+                    useHybridComposition: true,
+                    domStorageEnabled: true,
+                  ),
+                ),
+                onWebViewCreated: (controller) {
+                  _webViewController = controller;
+                  _isWebViewReady = true;
+                },
+                shouldOverrideUrlLoading: (controller, navigationAction) async {
+                  var uri = navigationAction.request.url!;
+                  debugPrint("Checking URL: ${uri.toString()}");
+                  
+                  // Intercept non-http(s) schemes
+                  if (!["http", "https", "file", "chrome", "data", "javascript", "about"].contains(uri.scheme)) {
+                    await _handleExternalLink(uri);
+                    return NavigationActionPolicy.CANCEL;
+                  }
+                  
+                  // Aggressively intercept wa.me and whatsapp.com links even if they use https
+                  if (uri.host.contains("wa.me") || uri.host.contains("whatsapp.com")) {
+                    await _handleExternalLink(uri);
+                    return NavigationActionPolicy.CANCEL;
+                  }
 
-                        if (!_isWebViewReady) {
-                          _isWebViewReady = true;
-                        }
-                        
-                        if (_globalPendingDeepLink != null) {
-                          final pending = _globalPendingDeepLink!;
-                          final currentUrl = url?.toString() ?? '';
-                          
-                          String resolvedPending = pending;
-                          if (!pending.startsWith('http')) {
-                            final path = pending.startsWith('/') ? pending : '/$pending';
-                            try {
-                              resolvedPending = Uri.parse(widget.url).replace(path: path.split('?')[0], query: path.contains('?') ? path.split('?')[1] : null).toString();
-                            } catch (_) {}
-                          }
-
-                          if (currentUrl == resolvedPending || currentUrl.startsWith(resolvedPending)) {
-                            debugPrint("Already on target page ($currentUrl), clearing pending link");
-                            _globalPendingDeepLink = null;
-                          } else {
-                            _globalPendingDeepLink = null;
-                            debugPrint("Processing pending deep link: $pending");
-                            Future.delayed(const Duration(milliseconds: 2000), () {
-                              if (mounted) _loadUrl(pending);
-                            });
-                          }
-                        }
-                      },
-                      onReceivedError: (controller, request, error) { debugPrint("WebView Error: ${error.description}"); _pullToRefreshController?.endRefreshing(); },
-                      onProgressChanged: (controller, progress) { if (progress == 100) _pullToRefreshController?.endRefreshing(); setState(() => _progress = progress / 100); },
-                      shouldOverrideUrlLoading: (controller, navigationAction) async {
-                        var uri = navigationAction.request.url;
-                        if (uri != null) {
-                          final String urlString = uri.toString();
-                          debugPrint("Intercepted URL loading: $urlString");
-                          
-                          // Handle WhatsApp, Mail, and Phone links
-                          if (urlString.startsWith("whatsapp://") || 
-                              urlString.startsWith("https://wa.me/") || 
-                              urlString.startsWith("mailto:") || 
-                              urlString.startsWith("tel:")) {
-                            debugPrint("Launching external app for: $urlString");
-                            if (await canLaunchUrl(uri)) {
-                              await launchUrl(uri, mode: LaunchMode.externalApplication);
-                              return NavigationActionPolicy.CANCEL;
-                            }
-                          }
-                          
-                          // Handle generic non-http schemes
-                          if (!["http", "https", "file", "chrome", "data", "javascript", "about"].contains(uri.scheme)) {
-                            if (await canLaunchUrl(uri)) {
-                              await launchUrl(uri, mode: LaunchMode.externalApplication);
-                              return NavigationActionPolicy.CANCEL;
-                            }
-                          }
-                        }
-                        return NavigationActionPolicy.ALLOW;
-                      },
+                  return NavigationActionPolicy.ALLOW;
+                },
+                onLoadStop: (controller, url) async {
+                  _pullToRefreshController?.endRefreshing();
+                  widget.onPageFinished();
+                  
+                  if (_globalPendingDeepLink != null) {
+                    final path = _globalPendingDeepLink!;
+                    _globalPendingDeepLink = null;
+                    _loadUrl(path);
+                  }
+                },
+                onProgressChanged: (controller, progress) {
+                  if (progress == 100) _pullToRefreshController?.endRefreshing();
+                  setState(() => _progress = progress / 100);
+                },
+              ),
+              if (_progress < 1.0)
+                LinearProgressIndicator(value: _progress, color: const Color(0xFFC0151B), backgroundColor: Colors.white),
+              if (_isOffline)
+                Container(
+                  color: Colors.white,
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.wifi_off, size: 80, color: Color(0xFFC0151B)),
+                        const SizedBox(height: 16),
+                        const Text("No Internet Connection", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 8),
+                        ElevatedButton(
+                          onPressed: () => _webViewController?.reload(),
+                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFC0151B)),
+                          child: const Text("Retry", style: TextStyle(color: Colors.white)),
+                        ),
+                      ],
                     ),
                   ),
-                  if (_isOffline) Container(color: Colors.white, child: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [const Icon(Icons.wifi_off, color: Color(0xFFC0151B), size: 64), const SizedBox(height: 16), const Text('No Internet Connection', style: TextStyle(color: Color(0xFFC0151B), fontSize: 18, fontWeight: FontWeight.bold)), const SizedBox(height: 8), const Text('Please check your network settings.', style: TextStyle(color: Colors.black54)), const SizedBox(height: 24), ElevatedButton(onPressed: () => _webViewController?.reload(), style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFC0151B)), child: const Text('Retry', style: TextStyle(color: Colors.white)))]))),
-                ],
-              ),
-            ),
-          ],
+                ),
+            ],
+          ),
         ),
       ),
     );
