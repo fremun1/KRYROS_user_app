@@ -17,6 +17,16 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
 }
 
+// ─── FIX #1 ───────────────────────────────────────────────────────────────────
+// The pending deep-link URL must survive across widget rebuilds.  We store it
+// in a top-level variable so it is accessible both from the background-message
+// handler (which runs before the widget tree exists) and from the WebView's
+// onLoadStop callback (which runs after the widget tree is ready).
+// Previously it was only stored inside _WebViewPageState, so a terminated-app
+// launch (getInitialMessage) could set it before the state object existed, and
+// it was lost.
+String? _globalPendingDeepLink;
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
@@ -25,6 +35,29 @@ void main() async {
   } catch (e) {
     debugPrint("Firebase initialization failed: $e");
   }
+
+  // ─── FIX #2 ─────────────────────────────────────────────────────────────────
+  // Capture the deep-link URL from a terminated-app launch BEFORE runApp() is
+  // called.  The old code called getInitialMessage() inside initState(), which
+  // runs after the widget tree is built and after the WebView has already
+  // started loading the homepage — so the pending URL was often set too late
+  // and the "already on target page" guard cleared it immediately.
+  try {
+    final RemoteMessage? initialMessage =
+        await FirebaseMessaging.instance.getInitialMessage();
+    if (initialMessage != null) {
+      final String? url = initialMessage.data['url'] ??
+          initialMessage.data['link'] ??
+          initialMessage.data['click_action'];
+      if (url != null && url.isNotEmpty && url != 'FLUTTER_NOTIFICATION_CLICK') {
+        _globalPendingDeepLink = url;
+        debugPrint("Terminated-app deep link captured at startup: $url");
+      }
+    }
+  } catch (e) {
+    debugPrint("getInitialMessage failed: $e");
+  }
+
   if (Platform.isAndroid) {
     await Permission.notification.request();
   }
@@ -69,8 +102,6 @@ class _MainContainerState extends State<MainContainer> {
       setState(() {
         _isWebViewReady = true;
       });
-      // Delay to ensure WebView is actually rendered before hiding splash
-      // We use a slightly longer delay if the first load was very fast
       Future.delayed(const Duration(milliseconds: 1500), () {
         if (mounted) {
           setState(() {
@@ -87,9 +118,8 @@ class _MainContainerState extends State<MainContainer> {
       backgroundColor: const Color(0xFF050816),
       body: Stack(
         children: [
-          // Keep WebView alive but hidden until splash is gone
           Offstage(
-            offstage: false, // Always render it to let it load in background
+            offstage: false,
             child: WebViewPage(
               url: widget.url,
               onPageFinished: _onWebViewReady,
@@ -231,8 +261,7 @@ class _WebViewPageState extends State<WebViewPage> {
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
   double _progress = 0;
   bool _isOffline = false;
-  bool _isWebViewReady = false;          
-  String? _pendingDeepLinkUrl;           
+  bool _isWebViewReady = false;
   String? _fcmToken;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   StreamSubscription<String>? _tokenRefreshSubscription;
@@ -296,20 +325,18 @@ class _WebViewPageState extends State<WebViewPage> {
       },
     );
 
-    RemoteMessage? initialMessage = await FirebaseMessaging.instance.getInitialMessage();
-    if (initialMessage != null) {
-      final String? url = initialMessage.data['url'] ?? initialMessage.data['link'] ?? initialMessage.data['click_action'];
-      debugPrint("App opened via notification (terminated): $url");
-      if (url != null && url.isNotEmpty) {
-        _pendingDeepLinkUrl = url;
-      }
-    }
+    // ─── FIX #2 (continued) ────────────────────────────────────────────────────
+    // getInitialMessage() is now called in main() before runApp(), so we no
+    // longer call it here.  The result is already stored in _globalPendingDeepLink
+    // and will be consumed in onLoadStop below.
 
+    // ─── Foreground messages ───────────────────────────────────────────────────
     FirebaseMessaging.onMessage.listen((message) async {
       final RemoteNotification? notification = message.notification;
       if (notification != null) {
         final String? imageUrl = message.data['imageUrl'] ?? message.data['image'] ?? notification.android?.imageUrl;
-        final String? payload = message.data['url'] ?? message.data['link'] ?? message.data['click_action'];
+        final String? payload = message.data['url'] ?? message.data['link'] ??
+            (message.data['click_action'] != 'FLUTTER_NOTIFICATION_CLICK' ? message.data['click_action'] : null);
         debugPrint("Foreground notification received, payload: $payload");
         BigPictureStyleInformation? bigPictureStyleInformation;
         if (imageUrl != null && imageUrl.isNotEmpty) {
@@ -345,20 +372,30 @@ class _WebViewPageState extends State<WebViewPage> {
       }
     });
 
+    // ─── Background / app-in-background tap ───────────────────────────────────
     FirebaseMessaging.onMessageOpenedApp.listen((message) {
-      final String? url = message.data['url'] ?? message.data['link'] ?? message.data['click_action'];
-      debugPrint("Background notification tapped, payload: $url");
+      final String? url = message.data['url'] ?? message.data['link'] ??
+          (message.data['click_action'] != 'FLUTTER_NOTIFICATION_CLICK' ? message.data['click_action'] : null);
+      debugPrint("Background notification tapped, url: $url");
       if (url != null && url.isNotEmpty) {
         _navigateToUrl(url);
       }
     });
   }
 
+  // ─── FIX #3 ─────────────────────────────────────────────────────────────────
+  // The old _navigateToUrl stored the URL in the instance field _pendingDeepLinkUrl.
+  // But when the WebView is already ready (app was in background), it called
+  // _loadUrl() directly — which is correct.  However, when the app was terminated
+  // and relaunched, the URL was stored in the instance field which was created
+  // AFTER getInitialMessage() had already been called in initState, causing a
+  // race condition.  Now we always write to _globalPendingDeepLink as the single
+  // source of truth, and _loadUrl() is called from onLoadStop.
   void _navigateToUrl(String url) {
     debugPrint("Routing to URL: $url");
     if (url.isEmpty) return;
-    
-    // If it's a relative path, ensure it starts with /
+
+    // Normalise relative paths
     String target = url;
     if (!url.startsWith('http') && !url.startsWith('/')) {
       target = '/$url';
@@ -367,7 +404,7 @@ class _WebViewPageState extends State<WebViewPage> {
     if (_isWebViewReady && _webViewController != null) {
       _loadUrl(target);
     } else {
-      _pendingDeepLinkUrl = target;
+      _globalPendingDeepLink = target;
     }
   }
 
@@ -397,25 +434,27 @@ class _WebViewPageState extends State<WebViewPage> {
     
     String target = url;
     
-    // If it's a full URL starting with http, use it directly
     if (url.startsWith('http')) {
       target = url;
     } else {
-      // It's a relative path, resolve it against the base URL
       try {
         final baseUri = Uri.parse(widget.url);
-        // Ensure the path starts with / for resolution
         final path = url.startsWith('/') ? url : '/$url';
-        target = baseUri.replace(path: path, query: null, fragment: null).resolve(path).toString();
-        
-        // If there were query params in the original relative url, preserve them
+        // ─── FIX #4 ───────────────────────────────────────────────────────────
+        // The old code called baseUri.replace(...).resolve(path) which double-
+        // resolved the path and could produce a malformed URL such as
+        // "https://kryros.com/product" being resolved against "/shop" to give
+        // "https://kryros.com/shop" correctly, but then the extra .resolve()
+        // call would re-resolve it against the already-replaced URI, sometimes
+        // stripping query parameters or producing an incorrect path.
+        // We now simply replace the path on the base URI and handle query
+        // parameters separately.
         if (url.contains('?')) {
-          final query = url.split('?')[1];
-          if (target.contains('?')) {
-            target += '&$query';
-          } else {
-            target += '?$query';
-          }
+          final parts = url.split('?');
+          final cleanPath = parts[0].startsWith('/') ? parts[0] : '/${parts[0]}';
+          target = baseUri.replace(path: cleanPath, query: parts[1], fragment: null).toString();
+        } else {
+          target = baseUri.replace(path: path, query: null, fragment: null).toString();
         }
       } catch (e) {
         debugPrint("Error resolving relative URL: $e");
@@ -496,28 +535,42 @@ class _WebViewPageState extends State<WebViewPage> {
                         _pullToRefreshController?.endRefreshing();
                         setState(() => _progress = 1.0);
                         
-                        // Signal back to MainContainer that first load is done
                         widget.onPageFinished();
-                        
                         _registerTokens();
 
                         if (!_isWebViewReady) {
                           _isWebViewReady = true;
                         }
                         
-                        // Always check for pending deep link on every page load finish
-                        // to handle cases where the initial load was just the base URL
-                        if (_pendingDeepLinkUrl != null) {
-                          final pending = _pendingDeepLinkUrl!;
-                          debugPrint("Processing pending deep link: $pending");
+                        // ─── FIX #1 + #2 (consumption) ──────────────────────
+                        // Consume the global pending deep link.  We only act on
+                        // it when the current page is the homepage (base URL),
+                        // meaning this is the very first load after a cold start
+                        // triggered by a notification tap.  If the WebView has
+                        // already navigated to the target page (e.g. a second
+                        // onLoadStop fires after _loadUrl), we clear it without
+                        // re-navigating to avoid an infinite loop.
+                        if (_globalPendingDeepLink != null) {
+                          final pending = _globalPendingDeepLink!;
+                          final currentUrl = url?.toString() ?? '';
                           
-                          // If we are already on the target page, clear it
-                          if (url.toString().contains(pending)) {
-                            debugPrint("Already on target page, clearing pending link");
-                            _pendingDeepLinkUrl = null;
+                          // Resolve the pending URL so we can compare properly
+                          String resolvedPending = pending;
+                          if (!pending.startsWith('http')) {
+                            final path = pending.startsWith('/') ? pending : '/$pending';
+                            try {
+                              resolvedPending = Uri.parse(widget.url).replace(path: path.split('?')[0], query: path.contains('?') ? path.split('?')[1] : null).toString();
+                            } catch (_) {}
+                          }
+
+                          if (currentUrl == resolvedPending || currentUrl.startsWith(resolvedPending)) {
+                            // Already on the target page — just clear
+                            debugPrint("Already on target page ($currentUrl), clearing pending link");
+                            _globalPendingDeepLink = null;
                           } else {
-                            _pendingDeepLinkUrl = null;
-                            // Wait for React hydration before redirecting
+                            // Navigate to the deep link after React hydration
+                            _globalPendingDeepLink = null;
+                            debugPrint("Processing pending deep link: $pending");
                             Future.delayed(const Duration(milliseconds: 2000), () {
                               if (mounted) _loadUrl(pending);
                             });
