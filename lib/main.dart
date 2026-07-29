@@ -317,29 +317,21 @@ class _WebViewPageState extends State<WebViewPage> {
     // Create notification channels for Android to listen to both user and admin notifications
     const AndroidNotificationChannel userChannel = AndroidNotificationChannel(
       'kryros_notifications',
-      'KRYROS User Notifications',
-      description: 'Notifications for KRYROS users',
-      importance: Importance.max,
-      enableVibration: true,
-      playSound: true,
-    );
-    const AndroidNotificationChannel adminChannel = AndroidNotificationChannel(
-      'kryros_admin_notifications',
-      'KRYROS Admin Notifications',
-      description: 'Notifications for KRYROS admins',
+      'KRYROS Notifications',
+      description: 'Notifications for KRYROS',
       importance: Importance.max,
       enableVibration: true,
       playSound: true,
     );
     await flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.createNotificationChannel(userChannel);
-    await flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.createNotificationChannel(adminChannel);
 
     FirebaseMessaging.onMessage.listen((message) async {
       final RemoteNotification? notification = message.notification;
       if (notification != null) {
         final String? imageUrl = message.data['imageUrl'] ?? message.data['image'] ?? notification.android?.imageUrl;
         final String? payload = message.data['url'] ?? message.data['link'] ??
-            (message.data['click_action'] != 'FLUTTER_NOTIFICATION_CLICK' ? message.data['click_action'] : null);
+            (message.data['click_action'] != 'FLUTTER_NOTIFICATION_CLICK' ? message.data['click_action'] : null) ??
+            message.data['url'];
         debugPrint("Foreground notification received, payload: $payload");
         BigPictureStyleInformation? bigPictureStyleInformation;
         if (imageUrl != null && imageUrl.isNotEmpty) {
@@ -400,6 +392,13 @@ class _WebViewPageState extends State<WebViewPage> {
     // Special case for tracking links that might be missing the track prefix
     if (target.contains('orderNumber=') && !target.contains('/track')) {
       target = '/track${target.startsWith('/') ? target : '/$target'}';
+    }
+
+    // Handle deep links that might be in query param format (?id=...) or path format (/orders/id)
+    // The mobile app usually expects /orders/id for the router, but backend might send ?id=...
+    if (target.startsWith('/orders?id=')) {
+      final id = target.split('?id=').last;
+      target = '/orders/$id';
     }
 
     if (_isWebViewReady && _webViewController != null) {
