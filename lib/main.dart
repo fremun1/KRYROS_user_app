@@ -17,14 +17,6 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
 }
 
-// ─── FIX #1 ───────────────────────────────────────────────────────────────────
-// The pending deep-link URL must survive across widget rebuilds.  We store it
-// in a top-level variable so it is accessible both from the background-message
-// handler (which runs before the widget tree exists) and from the WebView's
-// onLoadStop callback (which runs after the widget tree is ready).
-// Previously it was only stored inside _WebViewPageState, so a terminated-app
-// launch (getInitialMessage) could set it before the state object existed, and
-// it was lost.
 String? _globalPendingDeepLink;
 
 void main() async {
@@ -36,12 +28,6 @@ void main() async {
     debugPrint("Firebase initialization failed: $e");
   }
 
-  // ─── FIX #2 ─────────────────────────────────────────────────────────────────
-  // Capture the deep-link URL from a terminated-app launch BEFORE runApp() is
-  // called.  The old code called getInitialMessage() inside initState(), which
-  // runs after the widget tree is built and after the WebView has already
-  // started loading the homepage — so the pending URL was often set too late
-  // and the "already on target page" guard cleared it immediately.
   try {
     final RemoteMessage? initialMessage =
         await FirebaseMessaging.instance.getInitialMessage();
@@ -72,12 +58,12 @@ class KryrosUserApp extends StatelessWidget {
       title: 'KRYROS',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        primaryColor: const Color(0xFF27B9AF),
+        primaryColor: const Color(0xFFC0151B), // KRYROS RED
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF27B9AF),
-          primary: const Color(0xFF27B9AF),
-          surface: const Color(0xFF050816),
+          seedColor: const Color(0xFFC0151B),
+          primary: const Color(0xFFC0151B),
+          surface: Colors.white,
         ),
       ),
       home: const MainContainer(url: 'https://kryros.com'),
@@ -115,7 +101,7 @@ class _MainContainerState extends State<MainContainer> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF050816),
+      backgroundColor: Colors.white,
       body: Stack(
         children: [
           Offstage(
@@ -162,8 +148,8 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
   }
   @override
   Widget build(BuildContext context) {
-    const primaryColor = Color(0xFF27B9AF);
-    const backgroundColor = Color(0xFF050816);
+    const primaryColor = Color(0xFFC0151B); // KRYROS RED
+    const backgroundColor = Colors.white; // WHITE BACKGROUND
     return Scaffold(
       backgroundColor: backgroundColor,
       body: AnimatedOpacity(
@@ -221,7 +207,7 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
               const SizedBox(height: 32),
               FadeTransition(
                 opacity: Tween<double>(begin: 1.0, end: 0.5).animate(CurvedAnimation(parent: _blinkController, curve: const Interval(0.2, 1.0, curve: Curves.easeInOut))),
-                child: const Text('KRYROS', style: TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900, letterSpacing: 4.0)),
+                child: const Text('KRYROS', style: TextStyle(color: primaryColor, fontSize: 26, fontWeight: FontWeight.w900, letterSpacing: 4.0)),
               ),
               const SizedBox(height: 24),
               Row(
@@ -273,7 +259,7 @@ class _WebViewPageState extends State<WebViewPage> {
     _setupNotifications();
     _checkConnectivity();
     _pullToRefreshController = PullToRefreshController(
-      settings: PullToRefreshSettings(color: const Color(0xFF27B9AF), backgroundColor: const Color(0xFF050816)),
+      settings: PullToRefreshSettings(color: const Color(0xFFC0151B), backgroundColor: Colors.white),
       onRefresh: () async {
         if (Platform.isAndroid) _webViewController?.reload();
         else if (Platform.isIOS) _webViewController?.loadUrl(urlRequest: URLRequest(url: await _webViewController?.getUrl()));
@@ -317,7 +303,6 @@ class _WebViewPageState extends State<WebViewPage> {
       onDidReceiveNotificationResponse: (response) {
         debugPrint("Notification tapped (foreground): ${response.payload}");
         if (response.payload != null && response.payload!.isNotEmpty) {
-          // Use a small delay for foreground taps to ensure the app is focused
           Future.delayed(const Duration(milliseconds: 500), () {
             _navigateToUrl(response.payload!);
           });
@@ -325,12 +310,6 @@ class _WebViewPageState extends State<WebViewPage> {
       },
     );
 
-    // ─── FIX #2 (continued) ────────────────────────────────────────────────────
-    // getInitialMessage() is now called in main() before runApp(), so we no
-    // longer call it here.  The result is already stored in _globalPendingDeepLink
-    // and will be consumed in onLoadStop below.
-
-    // ─── Foreground messages ───────────────────────────────────────────────────
     FirebaseMessaging.onMessage.listen((message) async {
       final RemoteNotification? notification = message.notification;
       if (notification != null) {
@@ -372,7 +351,6 @@ class _WebViewPageState extends State<WebViewPage> {
       }
     });
 
-    // ─── Background / app-in-background tap ───────────────────────────────────
     FirebaseMessaging.onMessageOpenedApp.listen((message) {
       final String? url = message.data['url'] ?? message.data['link'] ??
           (message.data['click_action'] != 'FLUTTER_NOTIFICATION_CLICK' ? message.data['click_action'] : null);
@@ -383,19 +361,10 @@ class _WebViewPageState extends State<WebViewPage> {
     });
   }
 
-  // ─── FIX #3 ─────────────────────────────────────────────────────────────────
-  // The old _navigateToUrl stored the URL in the instance field _pendingDeepLinkUrl.
-  // But when the WebView is already ready (app was in background), it called
-  // _loadUrl() directly — which is correct.  However, when the app was terminated
-  // and relaunched, the URL was stored in the instance field which was created
-  // AFTER getInitialMessage() had already been called in initState, causing a
-  // race condition.  Now we always write to _globalPendingDeepLink as the single
-  // source of truth, and _loadUrl() is called from onLoadStop.
   void _navigateToUrl(String url) {
     debugPrint("Routing to URL: $url");
     if (url.isEmpty) return;
 
-    // Normalise relative paths
     String target = url;
     if (!url.startsWith('http') && !url.startsWith('/')) {
       target = '/$url';
@@ -440,15 +409,6 @@ class _WebViewPageState extends State<WebViewPage> {
       try {
         final baseUri = Uri.parse(widget.url);
         final path = url.startsWith('/') ? url : '/$url';
-        // ─── FIX #4 ───────────────────────────────────────────────────────────
-        // The old code called baseUri.replace(...).resolve(path) which double-
-        // resolved the path and could produce a malformed URL such as
-        // "https://kryros.com/product" being resolved against "/shop" to give
-        // "https://kryros.com/shop" correctly, but then the extra .resolve()
-        // call would re-resolve it against the already-replaced URI, sometimes
-        // stripping query parameters or producing an incorrect path.
-        // We now simply replace the path on the base URI and handle query
-        // parameters separately.
         if (url.contains('?')) {
           final parts = url.split('?');
           final cleanPath = parts[0].startsWith('/') ? parts[0] : '/${parts[0]}';
@@ -481,11 +441,11 @@ class _WebViewPageState extends State<WebViewPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF050816),
+      backgroundColor: Colors.white,
       body: SafeArea(
         child: Column(
           children: [
-            if (_progress < 1.0 && !_isOffline) LinearProgressIndicator(value: _progress, color: const Color(0xFF27B9AF), backgroundColor: Colors.transparent, minHeight: 2),
+            if (_progress < 1.0 && !_isOffline) LinearProgressIndicator(value: _progress, color: const Color(0xFFC0151B), backgroundColor: Colors.transparent, minHeight: 2),
             Expanded(
               child: Stack(
                 children: [
@@ -542,19 +502,10 @@ class _WebViewPageState extends State<WebViewPage> {
                           _isWebViewReady = true;
                         }
                         
-                        // ─── FIX #1 + #2 (consumption) ──────────────────────
-                        // Consume the global pending deep link.  We only act on
-                        // it when the current page is the homepage (base URL),
-                        // meaning this is the very first load after a cold start
-                        // triggered by a notification tap.  If the WebView has
-                        // already navigated to the target page (e.g. a second
-                        // onLoadStop fires after _loadUrl), we clear it without
-                        // re-navigating to avoid an infinite loop.
                         if (_globalPendingDeepLink != null) {
                           final pending = _globalPendingDeepLink!;
                           final currentUrl = url?.toString() ?? '';
                           
-                          // Resolve the pending URL so we can compare properly
                           String resolvedPending = pending;
                           if (!pending.startsWith('http')) {
                             final path = pending.startsWith('/') ? pending : '/$pending';
@@ -564,11 +515,9 @@ class _WebViewPageState extends State<WebViewPage> {
                           }
 
                           if (currentUrl == resolvedPending || currentUrl.startsWith(resolvedPending)) {
-                            // Already on the target page — just clear
                             debugPrint("Already on target page ($currentUrl), clearing pending link");
                             _globalPendingDeepLink = null;
                           } else {
-                            // Navigate to the deep link after React hydration
                             _globalPendingDeepLink = null;
                             debugPrint("Processing pending deep link: $pending");
                             Future.delayed(const Duration(milliseconds: 2000), () {
@@ -581,14 +530,35 @@ class _WebViewPageState extends State<WebViewPage> {
                       onProgressChanged: (controller, progress) { if (progress == 100) _pullToRefreshController?.endRefreshing(); setState(() => _progress = progress / 100); },
                       shouldOverrideUrlLoading: (controller, navigationAction) async {
                         var uri = navigationAction.request.url;
-                        if (uri != null && !["http", "https", "file", "chrome", "data", "javascript", "about"].contains(uri.scheme)) {
-                          if (await canLaunchUrl(uri)) { await launchUrl(uri, mode: LaunchMode.externalApplication); return NavigationActionPolicy.CANCEL; }
+                        if (uri != null) {
+                          final String urlString = uri.toString();
+                          debugPrint("Intercepted URL loading: $urlString");
+                          
+                          // Handle WhatsApp, Mail, and Phone links
+                          if (urlString.startsWith("whatsapp://") || 
+                              urlString.startsWith("https://wa.me/") || 
+                              urlString.startsWith("mailto:") || 
+                              urlString.startsWith("tel:")) {
+                            debugPrint("Launching external app for: $urlString");
+                            if (await canLaunchUrl(uri)) {
+                              await launchUrl(uri, mode: LaunchMode.externalApplication);
+                              return NavigationActionPolicy.CANCEL;
+                            }
+                          }
+                          
+                          // Handle generic non-http schemes
+                          if (!["http", "https", "file", "chrome", "data", "javascript", "about"].contains(uri.scheme)) {
+                            if (await canLaunchUrl(uri)) {
+                              await launchUrl(uri, mode: LaunchMode.externalApplication);
+                              return NavigationActionPolicy.CANCEL;
+                            }
+                          }
                         }
                         return NavigationActionPolicy.ALLOW;
                       },
                     ),
                   ),
-                  if (_isOffline) Container(color: const Color(0xFF050816), child: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [const Icon(Icons.wifi_off, color: Colors.white, size: 64), const SizedBox(height: 16), const Text('No Internet Connection', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)), const SizedBox(height: 8), const Text('Please check your network settings.', style: TextStyle(color: Colors.white70)), const SizedBox(height: 24), ElevatedButton(onPressed: () => _webViewController?.reload(), style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF27B9AF)), child: const Text('Retry', style: TextStyle(color: Colors.white)))]))),
+                  if (_isOffline) Container(color: Colors.white, child: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [const Icon(Icons.wifi_off, color: Color(0xFFC0151B), size: 64), const SizedBox(height: 16), const Text('No Internet Connection', style: TextStyle(color: Color(0xFFC0151B), fontSize: 18, fontWeight: FontWeight.bold)), const SizedBox(height: 8), const Text('Please check your network settings.', style: TextStyle(color: Colors.black54)), const SizedBox(height: 24), ElevatedButton(onPressed: () => _webViewController?.reload(), style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFC0151B)), child: const Text('Retry', style: TextStyle(color: Colors.white)))]))),
                 ],
               ),
             ),
