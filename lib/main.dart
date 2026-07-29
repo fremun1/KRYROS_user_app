@@ -314,6 +314,26 @@ class _WebViewPageState extends State<WebViewPage> {
       },
     );
 
+    // Create notification channels for Android to listen to both user and admin notifications
+    const AndroidNotificationChannel userChannel = AndroidNotificationChannel(
+      'kryros_notifications',
+      'KRYROS User Notifications',
+      description: 'Notifications for KRYROS users',
+      importance: Importance.max,
+      enableVibration: true,
+      playSound: true,
+    );
+    const AndroidNotificationChannel adminChannel = AndroidNotificationChannel(
+      'kryros_admin_notifications',
+      'KRYROS Admin Notifications',
+      description: 'Notifications for KRYROS admins',
+      importance: Importance.max,
+      enableVibration: true,
+      playSound: true,
+    );
+    await flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.createNotificationChannel(userChannel);
+    await flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.createNotificationChannel(adminChannel);
+
     FirebaseMessaging.onMessage.listen((message) async {
       final RemoteNotification? notification = message.notification;
       if (notification != null) {
@@ -400,14 +420,21 @@ class _WebViewPageState extends State<WebViewPage> {
   }
 
   Future<void> _registerNativeToken(String token) async {
+    final platform = Platform.isIOS ? 'ios' : 'android';
+    debugPrint('[FCM_REGISTRATION] User app registering token with platform: $platform');
     final client = HttpClient();
     try {
       final request = await client.postUrl(Uri.parse(_notificationTokenEndpoint));
       request.headers.contentType = ContentType.json;
-      request.write(jsonEncode({'token': token, 'platform': Platform.isIOS ? 'ios' : 'android'}));
+      final payload = {'token': token, 'platform': platform};
+      debugPrint('[FCM_PAYLOAD] Sending: ${jsonEncode(payload)}');
+      request.write(jsonEncode(payload));
       final response = await request.close();
       await response.drain();
-    } catch (_) {} finally { client.close(force: true); }
+      debugPrint('[FCM_REGISTERED_SUCCESS] User device registered with platform: $platform');
+    } catch (e) {
+      debugPrint('[FCM_REGISTRATION_ERROR] Failed to register user token: $e');
+    } finally { client.close(force: true); }
   }
 
   void _loadUrl(String url) {
