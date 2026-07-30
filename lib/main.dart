@@ -584,14 +584,25 @@ class _WebViewPageState extends State<WebViewPage> {
                     // Sync FCM token with authenticated user on any authenticated page.
                     // Expanded from just /profile, /orders, /dashboard to also catch
                     // /account, /checkout, /cart so the token is linked early.
-                    if (urlStr.contains('/profile') ||
-                        urlStr.contains('/orders') ||
-                        urlStr.contains('/dashboard') ||
-                        urlStr.contains('/account') ||
-                        urlStr.contains('/checkout') ||
-                        urlStr.contains('/cart')) {
-                      _syncTokenWithUser();
-                    }
+	                    if (urlStr.contains('/profile') ||
+	                        urlStr.contains('/orders') ||
+	                        urlStr.contains('/dashboard') ||
+	                        urlStr.contains('/account') ||
+	                        urlStr.contains('/checkout') ||
+	                        urlStr.contains('/cart')) {
+	                      _syncTokenWithUser();
+	                    }
+	
+	                    // Inject native token into web view so the storefront can use it
+	                    // for guest checkout or authenticated sessions without re-requesting permission.
+	                    if (_fcmToken != null) {
+	                      final platform = Platform.isIOS ? 'ios' : 'android';
+	                      controller.evaluateJavascript(source: """
+	                        window.kryrosNativeFcmToken = '$_fcmToken';
+	                        window.kryrosNativeFcmPlatform = '$platform';
+	                        window.dispatchEvent(new CustomEvent('kryros:native-fcm-token', { detail: '$_fcmToken' }));
+	                      """);
+	                    }
 
                     // Consume the pending deep link ONLY after the initial homepage
                     // has finished loading. This prevents the deep link from being
