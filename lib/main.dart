@@ -102,20 +102,22 @@ class _MainContainerState extends State<MainContainer> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      body: Stack(
-        children: [
-          Offstage(
-            offstage: false,
-            child: WebViewPage(
-              url: widget.url,
-              onPageFinished: _onWebViewReady,
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Offstage(
+              offstage: false,
+              child: WebViewPage(
+                url: widget.url,
+                onPageFinished: _onWebViewReady,
+              ),
             ),
-          ),
-          if (_showSplash)
-            SplashScreen(
-              isTransitioning: _isWebViewReady,
-            ),
-        ],
+            if (_showSplash)
+              SplashScreen(
+                isTransitioning: _isWebViewReady,
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -321,6 +323,10 @@ class _WebViewPageState extends State<WebViewPage> {
             allowsInlineMediaPlayback: true,
             useHybridComposition: true,
             allowsBackForwardNavigationGestures: true,
+            javaScriptEnabled: true,
+            domStorageEnabled: true,
+            databaseEnabled: true,
+            supportZoom: true,
           ),
           pullToRefreshController: _pullToRefreshController,
           onWebViewCreated: (controller) => _webViewController = controller,
