@@ -117,9 +117,11 @@ class _MainContainerState extends State<MainContainer> {
       body: SafeArea(
         child: Stack(
           children: [
-            WebViewPage(
-              url: widget.url,
-              onPageFinished: _onWebViewReady,
+            Positioned.fill(
+              child: WebViewPage(
+                url: widget.url,
+                onPageFinished: _onWebViewReady,
+              ),
             ),
             if (_showSplash)
               SplashScreen(
@@ -329,45 +331,59 @@ class _WebViewPageState extends State<WebViewPage> {
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        InAppWebView(
-          initialUrlRequest: URLRequest(url: WebUri(widget.url)),
-          initialSettings: InAppWebViewSettings(
-            useShouldOverrideUrlLoading: true,
-            mediaPlaybackRequiresUserGesture: false,
-            allowsInlineMediaPlayback: true,
-            useHybridComposition: false,
-            allowsBackForwardNavigationGestures: true,
-            javaScriptEnabled: true,
-            domStorageEnabled: true,
-            databaseEnabled: true,
-            supportZoom: true,
-            useWideViewPort: true,
-            loadWithOverviewMode: true,
-            userAgent: "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36 KRYROS_MOBILE_APP",
-            mixedContentMode: MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
-            safeBrowsingEnabled: false,
-            allowFileAccessFromFileURLs: true,
-            allowUniversalAccessFromFileURLs: true,
-            thirdPartyCookiesEnabled: true,
-          ),
-          pullToRefreshController: _pullToRefreshController,
-          onWebViewCreated: (controller) => _webViewController = controller,
-          onLoadStart: (controller, url) {
-            setState(() => _isWebViewReady = false);
-          },
-          onLoadStop: (controller, url) async {
-            _pullToRefreshController?.endRefreshing();
-            if (!_initialPageLoaded) {
-              _initialPageLoaded = true;
-              _isWebViewReady = true;
-              widget.onPageFinished();
-              if (_globalPendingDeepLink != null) {
-                final urlToLoad = _globalPendingDeepLink!;
-                _globalPendingDeepLink = null;
-                controller.loadUrl(urlRequest: URLRequest(url: WebUri(urlToLoad)));
+        Positioned.fill(
+          child: InAppWebView(
+            initialUrlRequest: URLRequest(
+              url: WebUri(widget.url),
+              headers: {'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'},
+            ),
+            initialSettings: InAppWebViewSettings(
+              useShouldOverrideUrlLoading: true,
+              mediaPlaybackRequiresUserGesture: false,
+              allowsInlineMediaPlayback: true,
+              useHybridComposition: true,
+              allowsBackForwardNavigationGestures: true,
+              javaScriptEnabled: true,
+              domStorageEnabled: true,
+              databaseEnabled: true,
+              supportZoom: true,
+              useWideViewPort: true,
+              loadWithOverviewMode: true,
+              userAgent: "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36 KRYROS_USER_APP",
+              mixedContentMode: MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
+              safeBrowsingEnabled: false,
+              allowFileAccessFromFileURLs: true,
+              allowUniversalAccessFromFileURLs: true,
+              thirdPartyCookiesEnabled: true,
+            ),
+            pullToRefreshController: _pullToRefreshController,
+            onWebViewCreated: (controller) => _webViewController = controller,
+            shouldOverrideUrlLoading: (controller, navigationAction) async {
+              final uri = navigationAction.request.url;
+              if (uri != null && !["http", "https", "file", "chrome", "data", "javascript", "about"].contains(uri.scheme)) {
+                if (await canLaunchUrl(uri)) {
+                  await launchUrl(uri, mode: LaunchMode.externalApplication);
+                  return NavigationActionPolicy.CANCEL;
+                }
               }
-            }
-          },
+              return NavigationActionPolicy.ALLOW;
+            },
+            onLoadStart: (controller, url) {
+              setState(() => _isWebViewReady = false);
+            },
+            onLoadStop: (controller, url) async {
+              _pullToRefreshController?.endRefreshing();
+              if (!_initialPageLoaded) {
+                _initialPageLoaded = true;
+                _isWebViewReady = true;
+                widget.onPageFinished();
+                if (_globalPendingDeepLink != null) {
+                  final urlToLoad = _globalPendingDeepLink!;
+                  _globalPendingDeepLink = null;
+                  controller.loadUrl(urlRequest: URLRequest(url: WebUri(urlToLoad)));
+                }
+              }
+            },
           onReceivedError: (controller, request, error) {
             debugPrint("WebView Error: ${error.description}");
             _pullToRefreshController?.endRefreshing();
